@@ -15,6 +15,6 @@ pr2ar
 if (!require("devtools")) {
   install.packages("devtools")
 }
-devtools::install_github("aucarter/pr2ar", dependencies = TRUE, build_vignettes = TRUE)
+devtools::install_github("dd-harp/pr2ar", dependencies = TRUE, build_vignettes = TRUE)
 ```
 
