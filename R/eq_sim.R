@@ -43,10 +43,8 @@ PR2AReq <- function(X, Tx, PAR, Bfn, showMessages = F) {
     }
     outA <- c()
     outY <- matrix(nrow = nrow(Bfn(PAR)), ncol = length(X))
-    if (!mono) {
-        outA2 <- c()
-        outY2 <- matrix(nrow = nrow(Bfn(PAR)), ncol = length(X))
-    }
+    outA2 <- c()
+    outY2 <- matrix(nrow = nrow(Bfn(PAR)), ncol = length(X))
     for (Xi in X) {
         if (Xi > max$X) {
             outA <- c(outA, NA)

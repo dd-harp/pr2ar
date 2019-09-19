@@ -66,6 +66,7 @@ server <- function(input, output) {
 
     plot.fn <- function(input) {
         PR = input$PR
+        PR = 1
         Tx = seq(0, 0.98, 0.02)
         PAR = list(In = 1, Cn = 1, A = 0.2, Q = 0.95, dt = 10, rho = Tx, d = 0)
         Bfn = makeBdrugs
@@ -84,7 +85,7 @@ server <- function(input, output) {
 
     output$RcPlot <- renderPlot({
         plot.fn(input)
-    }, height = 500)
+    }, width = 600, height = 500)
 }
 
 # Run the application
