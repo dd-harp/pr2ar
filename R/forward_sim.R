@@ -7,7 +7,7 @@
 #' equations that update the state vector
 #' @param X A prevalence rate
 fn <- function(A, PAR, Bfn, X) {
-    PR = AR2PR(A, PAR, Bfn)$X
+    PR = AR2PR(A, Tx = PAR$rho, PAR, Bfn)$X
     return(abs(X - PR))
 }
 #' A function for finding the optimal attack-rate for a given prevalence rate

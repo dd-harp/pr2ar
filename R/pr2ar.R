@@ -12,6 +12,7 @@
 #' @param X A vector of prevalence rates
 #' @param Tx A vector of case-management rates
 #' @param PAR A set of parameters for the mechanistic model of malaria
+#' @param Bfn The model to use
 #' @param Xinterval An integer with the number of days between PR observations
 #' @param eq Toggle for whether to calculate all attack-rates at equilibrium or
 #' to only calculate the initial states at equilibrium and simulate forward
@@ -19,7 +20,7 @@
 #' @param cpp A toggle for using the C++ version of the forward simulation
 #' algorithm
 #' @export
-PR2AR <- function(X, Tx, PAR, Xinterval = 365, eq = F, showMessages = F, cpp = T) {
+PR2AR <- function(X, Tx, PAR, Bfn = NULL, Xinterval = 365, eq = F, showMessages = F, cpp = T) {
     # Screen for NAs
     if (any(is.na(X))) {
         if (!eq) {
@@ -32,16 +33,17 @@ PR2AR <- function(X, Tx, PAR, Xinterval = 365, eq = F, showMessages = F, cpp = T
     # Interpolate inputs to match time step
     X = interpRates(X, inStep = Xinterval, outStep = PAR$dt)
     Tx = interpRates(Tx, inStep = Xinterval, outStep = PAR$dt)
-
     # Choose model
-    if (PAR$In > 1 & PAR$Cn > 0) {
-        Bfn = makeBdrugs_age
-    } else if (PAR$In > 1) {
-        Bfn = makeBage
-    } else if (PAR$Cn > 0) {
-        Bfn = makeBdrugs
-    } else {
-        Bfn = makeB
+    if(is.null(Bfn)){
+        if (PAR$In > 1 & PAR$Cn > 0) {
+            Bfn = makeBdrugs_age
+        } else if (PAR$In > 1) {
+            Bfn = makeBage
+        } else if (PAR$Cn > 0) {
+            Bfn = makeBdrugs
+        } else {
+            Bfn = makeB
+        }
     }
 
     # Calculate AR

@@ -35,7 +35,7 @@ findAXmax <- function(PAR, Bfn) {
 #' @param showMessages Toggle for whether the function prints messages
 #' @export
 PR2AReq <- function(X, Tx, PAR, Bfn, showMessages = F) {
-    A1X <- AR2PR(1, PAR, Bfn)
+    A1X <- AR2PR(A = 1, Tx = Tx, PAR = PAR, Bfn = Bfn)
     max <- findAXmax(PAR, Bfn)
     mono <- abs(A1X$X - max$X) < 0.001
     if (showMessages) {

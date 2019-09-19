@@ -1,0 +1,13 @@
+name: pr2ar
+title: pr2ar
+username:
+account: aucarter
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 953698
+bundleId: 2427950
+url: https://aucarter.shinyapps.io/pr2ar/
+when: 1568932904.8353
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: _pkgdown.yml|.Rbuildignore|.travis.yml|DESCRIPTION|NAMESPACE|README.md|Meta/vignette.rds|tests/testthat.R|tests/testthat/test-firstTest.R|tests/testthat/test-forwardBackward.R|tests/testthat/test-interpRates.R|vignettes/.gitignore|vignettes/MAP_example.Rmd|vignettes/PR2AR_Primer.Rmd|doc|docs|man|R|src
