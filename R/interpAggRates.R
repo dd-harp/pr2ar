@@ -7,10 +7,8 @@
 interpRates <- function(rates, inStep = 365, outStep = 10) {
     size = (length(rates) - 1) * round(inStep / outStep) + 1
     if(!any(is.na(rates))) {
-        smooth <- stats::smooth.spline(x = 1:length(rates), y = rates)
         interpX = seq(1, length(rates), length.out =  size)
-        interpR <- stats::predict(smooth$fit, interpX)$y
-        interpR[interpR < 0] = 0
+        interpR <- approx(x = 1:length(rates), y = rates, xout = interpX)$y
     } else {
         interpR <- rep(NA, size)
     }
