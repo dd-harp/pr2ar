@@ -90,7 +90,7 @@ simAR <- function(X, Tx, PAR, Bfn, cpp = T) {
                 W = makeW(PAR, Bfn)
                 PAR$rho = Tx[i]
                 V2 = makeV(PAR, Bfn)
-                outA[i - 1] = PAR$A = as.numeric((X[i] - D %*% V2 %*% V1 %*% Y)/(D %*% V2 %*% W %*% Y))
+                outA[i - 1] = PAR$A = max(1, as.numeric((X[i] - D %*% V2 %*% V1 %*% Y)/(D %*% V2 %*% W %*% Y)))
                 PAR$rho = Tx[i - 1]
                 B = Bfn(PAR)
                 Y = B %*% Y
@@ -112,7 +112,7 @@ simAR <- function(X, Tx, PAR, Bfn, cpp = T) {
                 PAR$rho = Tx[i]
                 V = makeV(PAR, Bfn)
                 W = makeW(PAR, Bfn)
-                outA[i] = PAR$A = as.numeric((X[i] - D %*% V %*% Y)/(D %*% W %*% Y))
+                outA[i] = PAR$A = max(1, as.numeric((X[i] - D %*% V %*% Y)/(D %*% W %*% Y)))
                 PAR$rho = Tx[i]
                 B = Bfn(PAR)
                 Y = B %*% Y
