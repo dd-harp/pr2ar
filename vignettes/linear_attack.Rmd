@@ -207,6 +207,28 @@ $x = \exp(At) x_0$. We could start there in order to linearize around
 some attack rate. We use the structure of the operator $A$ and break out
 the attack rate, itself.
 
+We determined above that our matrix differential equation for the master equation
+is
+$$
+\frac{dx}{dt} = \left([b~b] + M\right)x + b.
+$$
+I've been naming that matrix $B=[b~b]$. A matrix of this form has a steady
+state $\hat{x}=-A^{-1}b$. You can rewrite it as
+$$
+\frac{dx}{dt} = \left(B + M\right)(x - \hat{x}).
+$$
+The equation for the perturbation is then
+$$
+\frac{d\tilde{x}}{dt} = \left(B + M\right)\tilde{x}.
+$$
+If we write this as an exponential,
+$$
+x = e^{(B + M)t}x_0
+$$
+We can't separate the exponential into two because $B$ and $M$ don't commute.
+We could take a Taylor series in $b$ around some given value. That might be an improvement
+over assuming it's around $b=0$.
+
 
 ## A continuous stochastic approach
 
