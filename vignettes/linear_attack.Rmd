@@ -62,6 +62,9 @@ $$
   0 & \tau & -u
   \end{array}\right]
 $$
+The master equation, as written, is a matrix differential equation. Its solution will
+be a matrix exponential. Both of these terms are on Wikipedia, for reference.
+
 Let's look at the master equation, so that we can compare it later.
 First try integrating the equation as it stands.
 ```{r master_equation_integration}
@@ -221,14 +224,19 @@ The equation for the perturbation is then
 $$
 \frac{d\tilde{x}}{dt} = \left(B + M\right)\tilde{x}.
 $$
-If we write this as an exponential,
+As a word of caution, we may not be able to rewrite the equation this way because
+we don't yet know the value for the attack rate. In that case, we would treat the $b$
+term as a separate condition for the integral. 
+Meanwhile, if we write the solution to the equation above as an exponential,
 $$
 x = e^{(B + M)t}x_0
 $$
 We can't separate the exponential into two because $B$ and $M$ don't commute.
 We could take a Taylor series in $b$ around some given value. That might be an improvement
-over assuming it's around $b=0$.
-
+over assuming it's linear around $b=0$.
+$$
+  x \approx \left(e^{(B_0 + M)t} + e^{(B_0 + M)t}\tilde{B}\right)x_0
+$$
 
 ## A continuous stochastic approach
 
