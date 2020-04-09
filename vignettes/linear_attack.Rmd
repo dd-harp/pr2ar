@@ -1,0 +1,219 @@
+---
+title: "Linear Attack Rate"
+output: rmarkdown::pdf_document
+vignette: >
+  %\VignetteIndexEntry{Linear_attack_rate}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+```{r load_libraries, include = FALSE}
+library(deSolve)
+library(ggraph)
+library(ggplot2)
+library(igraph)
+```
+
+# Overview
+
+We want to estimate the probability that a person is infected by a mosquito
+bite during a time period of about fourteen days. We know that the recovery
+rate is slow because it takes around 200 days. What is a good way to take
+data about the prevalence of infection and estimate the attack rate?
+
+Austin has a document that works through a method for this. It starts with
+a simple algorithm for a time step and then modifies it. The modified algorithm
+has a nice name, "peek ahead," and it has a clear explanation, that it
+allows a transition from $I\rightarrow S\rightarrow I$. I'm uncomfortable
+with its derivation.
+
+This document is here to make me more comfortable with the derivation.
+I'll either see that it's numerically very close to the master equation,
+or I'll derive a time step that is similarly linear in the attack rate.
+
+
+# An S--I--T Model for Attack Rate
+
+## The Model
+We use a model that includes treatment because it forces us to be more
+honest about using matrices. It's so easy to drop the susceptible state
+and work with real numbers.
+There is a rate of treatment, $\tau$, and
+a rate for leaving the treated state, back to susceptible, $u$.
+
+As a graph, we see three states and four transitions.
+```{r model_graph}
+model_graph <- graph_from_literal(
+    S -+ infect -+ I, I -+ recover -+ S, I -+ treat -+ T, T -+ wane -+ S
+)
+plot(model_graph)
+```
+
+
+## The master equation
+
+The two compartments are susceptible and infected. The recovery rate
+is $r=1/200$ per day. The infection rate is $h$. If we write this as
+a master equation, it's a set of differential equations in the form
+$dx/dt = A x$.
+$$
+  A = \left[\begin{array}{ccc}
+  -h & r & u\\
+  h & -r-\tau & 0 \\
+  0 & \tau & -u
+  \end{array}\right]
+$$
+Let's look at the master equation, so that we can compare it later.
+First try integrating the equation as it stands.
+```{r master_equation_integration}
+plot_master_equation <- function(S, h, r, tau, u) {
+    params <- matrix(c(-h, h, 0, r, -r - tau, tau, u, 0, -u), nrow = 3)
+    state <- c(S = S, I = 1 - S, T = 0)
+    cme <- function(t, state, parameters) {
+        list(as.numeric(parameters %*% state))
+    }
+    times <- seq(0, 14, by = 0.1)
+    trajectory <- deSolve::ode(y = state, times = times, func = cme, parms = params)
+    tdf <- rbind(
+        data.frame(time = trajectory[, 1], value = trajectory[, 2], component = "S"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 3], component = "I"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 4], component = "T")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line()
+}
+plot_master_equation(.4, 1/50, 1/200, 1/50, 1/20)
+```
+
+We could try to write the solution to the master equation as $\exp(At)x_0$, but this
+matrix is singular, so we'd need some more complicated methods. The matrix is singular
+because the system can be stated without using $S$. You could replace $S=1-I-T$, so
+it's rank deficient.
+```{r an_a_matrix}
+A_matrix <- function(h, r, tau, u) matrix(c(-h, h, 0, r, -r - tau, tau, u, 0, -u), nrow = 3)
+A <- A_matrix(1/50, 1/200, 1/50, 1/20)
+eigen(A)
+```
+When we see, for an SIR system, that $S$ is redundant, we rewrite it in terms of
+$I$ and $R$. Can we formalize that process so that we can do a similar rewrite
+for larger matrices? The rewrite will also pull out the attack rate.
+Let's work through it for the SIT system here.
+
+We are going to assume that $S = 1-I-T$. Start by dropping the first
+equation because it's redundant. We still have the full state space though.
+$$
+  \left[\begin{array}{ccc}
+  h & -r-\tau & 0 \\
+  0 & \tau & -u
+  \end{array}\right]
+  \left[\begin{array}{c}S \\ I \\ T\end{array}\right]
+$$
+This is equivalent to
+$$
+  \left(\left[\begin{array}{cc}
+  h & h  \\
+  0 & 0
+  \end{array}\right] + \left[\begin{array}{cc}
+  -r-\tau & 0 \\
+  \tau & -u
+  \end{array}\right]\right)
+  \left[\begin{array}{c}I \\ T\end{array}\right] +
+  \left[\begin{array}{c}h \\ 0\end{array}\right]
+$$
+There is a definite structure to the attack rate in this generator matrix. We
+can think of it as $(B + M)x + b$.
+
+## Simple Forward Equation 
+
+We can create an algorithm to take a discrete time step by approximating
+the master equation.
+\begin{eqnarray}
+  \frac{dx}{dt} & = & A x_0 \\
+  x - x_0 & \approx & \Delta t A x_0 \\
+  x & \approx & (1 + \Delta t A) x_0
+\end{eqnarray}
+If we fill in the values from above, and we rescale all the rates
+by $\Delta t$,
+$$
+x =
+\left[\begin{array}{ccc}
+  1-h & r & u\\
+  h & 1-r-\tau & 0 \\
+  0 & \tau & 1-u
+  \end{array}\right]x_0
+$$
+Dave spotted a problem with this formulation. For high attack rates, not everybody was infected.
+It topped out at an infection rate of 0.93 for no treatment.
+
+Physically, the error is a result of our approximation. Using a linear approximation
+is equivalent to permitting one transition in the system. That means
+we permit $S\rightarrow I$, or $I\rightarrow S$, but we miss the case where somebody
+recovers during the duration and then gets infected. We would catch that if we used the complete
+solution.
+
+There's one small change that might be interesting. We could restate the discrete
+time step using an implicit formulation. I wonder whether it suffers the same problem
+as before. The only change here is that, on the right side, we set the value
+to $x$ instead of $x_0$.
+\begin{eqnarray}
+  \frac{dx}{dt} & = & A x_0 \\
+  x - x_0 & \approx & \Delta t A x \\
+ (1 - \Delta t A) x & \approx & x_0
+\end{eqnarray}
+
+
+## Our operational constraint
+
+We need to approximate one time step of the system in such a way that we can
+solve it for the attack rate. The simplest form of this is to come up with
+a time step that can be split into a part with the attack rate and a part without.
+$$
+  x = (hM_0 + M_1) x_0
+$$
+Then we can solve for the attack rate, given a fair knowledge of the other constants and
+the two prevalence values.
+
+How do we find this new equation? We have an intuition that we need to include, at least,
+the $I\rightarrow S \rightarrow I$ transition, and we want to linearize around some value
+of the attack rate.
+
+
+## Discrete time approach
+
+One approach is to say that a ten-day duration is ten one-day steps, so that it's possible
+to recover and get sick again on different days.
+Let's work with the reduced system, where we've removed the susceptible state.
+Here, the time step would be
+$$
+  x = (1 + (B + M))x_0 + b
+$$
+where we assume $B, M, b$ are rescaled by the time step. If we iterate this
+to get $x_1$, then $x_2$, then $x_3$, the result is
+$$
+x_3 = b + (1+B+M)b + (1+B+M)^2b + (1+B+M)^3x_0
+$$
+While a single time step was linear in attack rate, two or more time steps
+aren't linear in the attack rate.
+We can reduce it by replacing the finite series.
+$$
+x_n = \frac{1-(1+B+M)^n}{1-(1+B+M)}b + (1+B+M)^nx_0
+$$
+I'll bet we could pick a value for the matrix $B=[b,b]$, then solve for the vector $b$ and iterate to get
+a solution.
+
+
+## A continuous deterministic approach
+
+We know that the master equation has a solution of the form
+$x = \exp(At) x_0$. We could start there in order to linearize around
+some attack rate. We use the structure of the operator $A$ and break out
+the attack rate, itself.
+
+
+## A continuous stochastic approach
+
+This approach treats the system as a continuous-time stochastic
+system and asks the probability for all paths. It has the advantage
+that we can specify, exactly, that we permit $I\rightarrow S\rightarrow I$
+but no other multi-step jumps.
+It has the disadvantage that its matrix form is a product integral and
+it's non-matrix form will have convolutions.
+
