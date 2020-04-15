@@ -55,11 +55,21 @@ The two compartments are susceptible and infected. The recovery rate
 is $r=1/200$ per day. The infection rate is $h$. If we write this as
 a master equation, it's a set of differential equations.
 $$
-  \frac{dx}{dt} = \left[\begin{array}{ccc}
+  \frac{d}{dt}  \left[\begin{array}{c}
+  S\\
+  I \\
+  T
+  \end{array}\right]
+ = \left[\begin{array}{ccc}
   -h & r & u\\
   h & -r-\tau & 0 \\
   0 & \tau & -u
-  \end{array}\right]x
+  \end{array}\right]
+  \left[\begin{array}{c}
+  S\\
+  I \\
+  T
+  \end{array}\right]
 $$
 The master equation, as written, is a matrix differential equation. Its solution will
 be a matrix exponential. Both of these terms are on Wikipedia, for reference.
@@ -70,9 +80,9 @@ First try integrating the equation as it stands.
 A_matrix <- function(h, sit_params) with(
   sit_params,
   matrix(
-    c(-h, r, u,
-      h, -r - tau, 0,
-      0, tau, -u),
+    c(-h       , r,  u,
+       h, -r - tau,  0,
+       0,      tau, -u),
     nrow = 3,
     byrow = TRUE
     )
@@ -111,7 +121,7 @@ matrix is singular, so we'd need some more complicated methods. The matrix is si
 because the system can be stated without using $S$. You could replace $S=1-I-T$, so
 it's rank deficient.
 ```{r an_a_matrix}
-A <- A_matrix(1/20, sit_params)
+A <- A_matrix(1/20, plot_sit_params)
 eigen(A)
 ```
 When we see, for an SIR system, that $S$ is redundant, we rewrite it in terms of
@@ -122,6 +132,7 @@ Let's work through it for the SIT system here.
 We are going to assume that $S = 1-I-T$. Start by dropping the first
 equation because it's redundant. We still have the full state space though.
 $$
+\frac{d}{dt}\left[\begin{array}{c}1-I-T \\ I \\ T\end{array}\right] =
   \left[\begin{array}{ccc}
   h & -r-\tau & 0 \\
   0 & \tau & -u
@@ -130,12 +141,23 @@ $$
 $$
 This is equivalent to
 $$
-\left(
+\frac{d}{dt}\left[\begin{array}{c}I \\ T\end{array}\right] =
 \left[\begin{array}{cc}
+  -r-\tau-h & -h \\
+  \tau & -u
+  \end{array}\right]
+  \left[\begin{array}{c}I \\ T\end{array}\right] +
+  \left[\begin{array}{c}h \\ 0\end{array}\right]
+$$
+You can also see it as
+$$
+\frac{d}{dt}\left[\begin{array}{c}I \\ T\end{array}\right] =
+\left(\left[\begin{array}{cc}
   -r-\tau & 0 \\
   \tau & -u
-  \end{array}\right] - \left[\begin{array}{cc}
-  h & h  \\
+  \end{array}\right] -
+\left[\begin{array}{cc}
+  h & h \\
   0 & 0
   \end{array}\right]
   \right)
@@ -143,7 +165,7 @@ $$
   \left[\begin{array}{c}h \\ 0\end{array}\right]
 $$
 There is a definite structure to the attack rate in this generator matrix. We
-can think of it as $(M-[b\:b])x + b$.
+can think of it as $b=(h, 0)^T$ and $(M-[b\:b])x + b$.
 
 ## Simple Forward Equation 
 
@@ -181,9 +203,10 @@ $$
 I=A(1-I_0) + QI_0
 $$
 Dave spotted a problem with this formulation. If you look at its equilibrium value,
-$I=A/(1+A-Q)$. For the largest attack rate and $r=1/200$, a two-week time step gives $I=0.93$.
+$I=A/(1+A-Q)$. For the largest attack rate and $r=1/200$, $A=1$,
+a two-week time step gives $I=0.93$.
 
-Physically, the error is a result of our approximation. Using a linear approximation
+The error is a result of our approximation of the master equation. Using a linear approximation
 is equivalent to permitting one transition in the system. That means
 we permit $S\rightarrow I$, or $I\rightarrow S$, but we miss the case where somebody
 recovers during the duration and then gets infected. We would catch that if we used the complete
@@ -208,6 +231,150 @@ equilibrium $I$, but it would be more stable for time steps.
  (1 - \Delta t A) x & \approx & x_0
 \end{eqnarray}
 
+What we see from the simple forward equation is that, by itself, it will be insufficient
+for a long time step.
+
+## Derive the Peekahead
+
+Can we derive the peekahead method from a master equation?
+This would mean we write a master equation that allows the
+$I\rightarrow S\rightarrow I$ transition and solve it.
+
+I said that the discrete-time step is an approximation to the master equation
+for small times. That's not quite correct, as you can see by the need above to
+approximate $h \approx \exp(h) -1$. More formally, you can derive
+the single time step probability by expanding the state space to allow only
+one jump per time. That is, take $(S,I,T)$ and create a state space
+$(S,I,T,S',I',T')$ where the primed compartments are purely absorbing.
+That's a larger matrix, but it has nicer eigenvalue properties.
+```{r big_six}
+big_matrix <- function(h, sit_params) with(
+  sit_params,
+  matrix(
+    c(-h,        0,  0, 0, 0, 0,
+       0, -r - tau,  0, 0, 0, 0,
+       0,        0, -u, 0, 0, 0,
+       0,        r,  u, 0, 0, 0,
+       h,        0,  0, 0, 0, 0,
+       0,      tau,  0, 0, 0, 0
+      ),
+    nrow = 6,
+    byrow = TRUE
+    )
+  )
+eigen(big_matrix(1/40, plot_sit_params))
+```
+When we want to allow the $I\rightarrow S\rightarrow I$ transition, that means
+we don't create an $S'$, so eliminate that column and row.
+```{r big_around}
+around_matrix <- function(h, sit_params) with(
+  sit_params,
+  matrix(
+    c(-h,        r,  u, 0, 0,
+       0, -r - tau,  0, 0, 0,
+       0,        0, -u, 0, 0,
+       h,        0,  0, 0, 0,
+       0,      tau,  0, 0, 0
+      ),
+    nrow = 5,
+    byrow = TRUE
+    )
+  )
+around_mat <- around_matrix(1/40, plot_sit_params)
+around_mat
+```
+
+```{r around_eigen}
+stopifnot(det(around_mat) == 0)
+around_eigen <- eigen(around_mat)
+around_eigen
+```
+The key to solving this equation is to diagonalize the matrix,
+so that we can exponentiate.
+```{r exponentiate}
+P <- around_eigen$vectors
+P %*% diag(around_eigen$values) %*% solve(P)
+```
+
+```{r inverse_p}
+solve(P)
+```
+
+But I said I'd do this for the peekahead. Let's return to the simplest
+form of this matrix. Make a version where there is a purely-absorbing
+$I$ called $\tilde{I}$.
+$$
+x' = \left[\begin{array}{ccc}
+  -h & r & 0 \\
+  0 & -r & 0 \\
+  h & 0 & 0
+\end{array}\right]\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right]
+$$
+Note that the steady state for this master equation is $\tilde{I}=1$. It's absorbing.
+How does this diagonalize? It has eigenvalues $(-h, -r, 0)$ and eigenvectors
+$$
+\left[\begin{array}{ccc}
+1 & 1 & 0 \\
+0 & (h-r)/r & 0 \\
+1 & -h / r & 1
+\end{array}\right]
+$$
+Let's check that with some numbers
+```{r peek_around}
+peek_matrix <- function(h, r)
+  matrix(
+    c(-h,  r,  0,
+       0, -r,  0,
+       h,  0,  0
+      ),
+    nrow = 3,
+    byrow = TRUE
+    )
+peek_eigen <- function(h, r) {
+  peig <- matrix(
+    c(1, 1, 0,
+      0, (h - r) / r, 0,
+      1, -h / r, 1),
+    nrow = 3,
+    byrow = TRUE
+  )
+  matrix(c(
+    peig[, 1] / sqrt(sum(peig[, 1] * peig[, 1])),
+    peig[, 2] / sqrt(sum(peig[, 2] * peig[, 2])),
+    peig[, 3] / sqrt(sum(peig[, 3] * peig[, 3]))
+  ), nrow = 3)
+  }
+peek_mat <- peek_matrix(1/25, 1/200)
+peek_mat
+```
+```{r peek_eigen}
+eigen(peek_mat)
+```
+```{r}
+peek_eigen(1/25, 1/200)
+```
+It looks like equations and numerics agree.
+That makes our solution have the form
+$$
+\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
+a_0 e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
+a_1 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
+a_2 \left[\begin{array}{c}0 \\ 0 \\ 1\end{array}\right]
+$$
+Initial values are $(1-I, I, 0)$, so $a_2=0$. This leads to
+$$
+\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
+(1-\frac{h}{h-r}I_0) e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
+\frac{r}{h-r}I_0 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
+$$
+If we write this out by component, we see $I = I_0e^{-rt}$ and the other $I$ is
+$$
+\tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-h}{h-r}I_0e^{-rt}
+$$
+Together, they give
+$$
+P[I] = I + \tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-r}{h-r}I_0e^{-rt}
+$$
 
 ## Our operational constraint
 
@@ -323,7 +490,7 @@ test_whole_equation_forward <- function() {
   x0 <- matrix(c(0.6, 0.1), ncol = 1)
   x1 <- matrix(cme_week(x0[1], x0[2], actual_h, known_params)[2:3], ncol = 1)
 
-  step_cnt <- 100
+  step_cnt <- 28
   dt <- 14 / step_cnt
   dt_params <- as.list(unlist(known_params) * dt)
   mb <- one_m_b(actual_h, dt_params)
@@ -415,4 +582,151 @@ that we can specify, exactly, that we permit $I\rightarrow S\rightarrow I$
 but no other multi-step jumps.
 It has the disadvantage that its matrix form is a product integral and
 it's non-matrix form will have convolutions.
+
+# Derive the Better Equation
+
+Can we derive the peekahead method froma master equation?
+This would mean we write a master equation that allows the
+$I\rightarrow S\rightarrow I$ transition and solve it.
+
+I said that the discrete-time step is an approximation to the master equation
+for small times. That's not quite correct, as you can see by the need above to
+approximate $h \approx \exp(h) -1$. More formally, you can derive
+the single time step probability by expanding the state space to allow only
+one jump per time. That is, take $(S,I,T)$ and create a state space
+$(S,I,T,S',I',T')$ where the primed compartments are purely absorbing.
+That's a larger matrix, but it has nicer eigenvalue properties.
+```{r big_six}
+big_matrix <- function(h, sit_params) with(
+  sit_params,
+  matrix(
+    c(-h,        0,  0, 0, 0, 0,
+       0, -r - tau,  0, 0, 0, 0,
+       0,        0, -u, 0, 0, 0,
+       0,        r,  u, 0, 0, 0,
+       h,        0,  0, 0, 0, 0,
+       0,      tau,  0, 0, 0, 0
+      ),
+    nrow = 6,
+    byrow = TRUE
+    )
+  )
+eigen(big_matrix(1/40, plot_sit_params))
+```
+When we want to allow the $I\rightarrow S\rightarrow I$ transition, that means
+we don't create an $S'$, so eliminate that column and row.
+```{r big_around}
+around_matrix <- function(h, sit_params) with(
+  sit_params,
+  matrix(
+    c(-h,        r,  u, 0, 0,
+       0, -r - tau,  0, 0, 0,
+       0,        0, -u, 0, 0,
+       h,        0,  0, 0, 0,
+       0,      tau,  0, 0, 0
+      ),
+    nrow = 5,
+    byrow = TRUE
+    )
+  )
+around_mat <- around_matrix(1/40, plot_sit_params)
+around_mat
+```
+
+```{r around_eigen}
+stopifnot(det(around_mat) == 0)
+around_eigen <- eigen(around_mat)
+around_eigen
+```
+The key to solving this equation is to diagonalize the matrix,
+so that we can exponentiate.
+```{r exponentiate}
+P <- around_eigen$vectors
+P %*% diag(around_eigen$values) %*% solve(P)
+```
+
+```{r inverse_p}
+solve(P)
+```
+
+But I said I'd do this for the peekahead. Let's return to the simplest
+form of this matrix. Make a version where there is a purely-absorbing
+$I$ called $\tilde{I}$.
+$$
+x' = \left[\begin{array}{ccc}
+  -h & r & 0 \\
+  0 & -r & 0 \\
+  h & 0 & 0
+\end{array}\right]\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right]
+$$
+Note that the steady state for this master equation is $\tilde{I}=1$. It's absorbing.
+How does this diagonalize? It has eigenvalues $(-h, -r, 0)$ and eigenvectors
+$$
+\left[\begin{array}{ccc}
+1 & 1 & 0 \\
+0 & (h-r)/r & 0 \\
+1 & -h / r & 1
+\end{array}\right]
+$$
+Let's check that with some numbers
+```{r peek_around}
+peek_matrix <- function(h, r)
+  matrix(
+    c(-h,  r,  0,
+       0, -r,  0,
+       h,  0,  0
+      ),
+    nrow = 3,
+    byrow = TRUE
+    )
+peek_eigen <- function(h, r) {
+  peig <- matrix(
+    c(1, 1, 0,
+      0, (h - r) / r, 0,
+      1, -h / r, 1),
+    nrow = 3,
+    byrow = TRUE
+  )
+  matrix(c(
+    peig[, 1] / sqrt(sum(peig[, 1] * peig[, 1])),
+    peig[, 2] / sqrt(sum(peig[, 2] * peig[, 2])),
+    peig[, 3] / sqrt(sum(peig[, 3] * peig[, 3]))
+  ), nrow = 3)
+  }
+peek_mat <- peek_matrix(1/25, 1/200)
+peek_mat
+```
+```{r peek_eigen}
+eigen(peek_mat)
+```
+```{r}
+peek_eigen(1/25, 1/200)
+```
+It looks like equations and numerics agree.
+That makes our solution have the form
+$$
+\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
+a_0 e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
+a_1 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
+a_2 \left[\begin{array}{c}0 \\ 0 \\ 1\end{array}\right]
+$$
+Initial values are $(1-I, I, 0)$, so $a_2=0$. This leads to
+$$
+\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
+(1-\frac{h}{h-r}I_0) e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
+\frac{r}{h-r}I_0 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
+$$
+If we write this out by component, we see $I = I_0e^{-rt}$ and the other $I$ is
+$$
+\tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-h}{h-r}I_0e^{-rt}
+$$
+Together, they give
+$$
+P[I] = I + \tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-r}{h-r}I_0e^{-rt}
+$$
+
+
+
+
+
 
