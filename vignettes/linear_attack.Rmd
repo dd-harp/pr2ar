@@ -302,7 +302,9 @@ solve(P)
 
 But I said I'd do this for the peekahead. Let's return to the simplest
 form of this matrix. Make a version where there is a purely-absorbing
-$I$ called $\tilde{I}$.
+$I$ called $\tilde{I}$. Our goal is to limit transitions, by hand,
+to only those we want to permit. This should simplify the solution, especially because
+this matrix is absorbing.
 $$
 x' = \left[\begin{array}{ccc}
   -h & r & 0 \\
@@ -314,12 +316,13 @@ Note that the steady state for this master equation is $\tilde{I}=1$. It's absor
 How does this diagonalize? It has eigenvalues $(-h, -r, 0)$ and eigenvectors
 $$
 \left[\begin{array}{ccc}
-1 & 1 & 0 \\
-0 & (h-r)/r & 0 \\
-1 & -h / r & 1
+1 & r & 0 \\
+0 & (h-r) & 0 \\
+-1 & -h & 1
 \end{array}\right]
 $$
-Let's check that with some numbers
+Let's check that with some numbers to compare the eigenvectors from R with
+what I think they should be.
 ```{r peek_around}
 peek_matrix <- function(h, r)
   matrix(
@@ -332,9 +335,9 @@ peek_matrix <- function(h, r)
     )
 peek_eigen <- function(h, r) {
   peig <- matrix(
-    c(1, 1, 0,
-      0, (h - r) / r, 0,
-      1, -h / r, 1),
+    c(1, r, 0,
+      0, (h - r), 0,
+      -1, -h, 1),
     nrow = 3,
     byrow = TRUE
   )
@@ -357,24 +360,172 @@ It looks like equations and numerics agree.
 That makes our solution have the form
 $$
 \left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
-a_0 e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
-a_1 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
+a_0 e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ -1\end{array}\right] +
+a_1 e^{-rt}\left[\begin{array}{c}r \\ (h-r) \\ -h\end{array}\right] +
 a_2 \left[\begin{array}{c}0 \\ 0 \\ 1\end{array}\right]
 $$
-Initial values are $(1-I, I, 0)$, so $a_2=0$. This leads to
+We find the constants by solving for the initial conditions $(1-I_0, I_0, 0)$.
+$$
+\left[\begin{array}{c}1-I_0 \\ I_0 \\ 0\end{array}\right] =
+\left[\begin{array}{ccc}1 & r & 0 \\ 0 & h-r & 0 \\ -1 & -h & 1\end{array}\right]
+\left[\begin{array}{c}a_0 \\ a_1 \\ a_2\end{array}\right]
+$$
+We can plug in to see that these are the constants.
+$$
+\left[\begin{array}{c}1-I_0 \\ I_0 \\ 0\end{array}\right] =
+\left[\begin{array}{ccc}1 & r & 0 \\ 0 & h-r & 0 \\ -1 & -h & 1\end{array}\right]
+\left[\begin{array}{c}(1-\frac{h}{h-r}I_0) \\ \frac{1}{h-r}I_0 \\ 1\end{array}\right]
+$$
+In fact, the whole, time-dependent probability is now of the same form.
 $$
 \left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
-(1-\frac{h}{h-r}I_0) e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
-\frac{r}{h-r}I_0 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
+\left[\begin{array}{ccc}1 & r & 0 \\ 0 & h-r & 0 \\ -1 & -h & 1\end{array}\right]
+\left[\begin{array}{c}(1-\frac{h}{h-r}I_0)e^{-ht} \\ \frac{1}{h-r}I_0e^{-rt} \\ 1\end{array}\right]
 $$
-If we write this out by component, we see $I = I_0e^{-rt}$ and the other $I$ is
+Add the both infected compartments together.
 $$
-\tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-h}{h-r}I_0e^{-rt}
+P[I] = I + \tilde{I} = I_0e^{-rt} -(1-\frac{h}{h-r}I_0)e^{-ht} - \frac{h}{h-r}I_0e^{-rt} - 1
 $$
-Together, they give
+Adding terms in $\exp(-rt)$.
 $$
-P[I] = I + \tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-r}{h-r}I_0e^{-rt}
+P[I] = -(1-\frac{h}{h-r}I_0)e^{-ht} +\left(\frac{h-r}{h-r}- \frac{h}{h-r}\right)I_0e^{-rt} + 1
 $$
+$$
+P[I] = -(1-\frac{h}{h-r}I_0)e^{-ht} -\frac{r}{h-r}I_0e^{-rt} + 1
+$$
+If we replace with attack rate and recovery, $\exp(-ht)=1-A$ and
+$\exp(-rt)=Q$.
+$$
+P[I] = -(1-\frac{h}{h-r}I_0)(1-A) -\frac{r}{h-r}I_0Q + 1
+$$
+We can find a comparison with the peekahead method by organizing this in terms
+of $S$ and $I$. We find $S$ by finding the 1 in $1-I$.
+Gather the $I_0$ terms to find $S$.
+\begin{eqnarray}
+P[I] & = & \frac{h}{h-r}I_0(1-A) -\frac{r}{h-r}I_0Q + 1+A-1\\
+& = & \frac{h}{h-r}I_0(1-A) -\frac{r}{h-r}I_0Q +AI_0 + A(1-I_0)\\
+& = & \left(\frac{h}{h-r}(1-A) -\frac{r}{h-r}Q +A\right)I_0 + AS_0\\
+& = & \left(h(1-A) -rQ +A(h-r)\right)\frac{I_0}{h-r} + AS_0\\
+& = & \left(h-Ah -rQ +Ah-Ar\right)\frac{I_0}{h-r} + AS_0\\
+& = & \frac{h-(Q+A)r}{h-r}I_0 + AS_0
+\end{eqnarray}
+
+Earlier, we checked our work by integrating a master equation. Here, we've solved
+the master equation exactly, so let's integrate this one.
+```{r master_equation_peek}
+cme_peek_trajectory <- function(I, h, r) {
+    params <- peek_matrix(h, r)
+    state <- c(S = 1 - I, I = I, T = 0)
+    cme <- function(t, state, parameters) {
+        list(as.numeric(parameters %*% state))
+    }
+    times <- seq(0, 14, by = 0.1)
+    deSolve::ode(y = state, times = times, func = cme, parms = params)
+}
+
+cme_peek_week <- function(I, h, r) {
+    trajectory <- cme_peek_trajectory(I, h, r)
+    unlist(trajectory[nrow(trajectory), c("S", "I", "T")])
+}
+
+plot_peek_cme <- function(I, h, r) {
+    trajectory <- cme_peek_trajectory(I, h, r)
+    tdf <- rbind(
+        data.frame(time = trajectory[, 1], value = trajectory[, 2], component = "S"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 3], component = "I"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 4], component = "T")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line() + ylim(0, .6)
+}
+plot_peek_cme(0.6, 1/20, 1/200)
+```
+That's fun. The green line is the slow recovery of the infected. The blue line
+are just the newly-infected.
+
+Great. let's look at the theoretical version. It should agree.
+```{r}
+cme_peek_theory <- function(I, h, r) {
+  peekm <- matrix(
+    c(1, r,     0,
+      0, h - r, 0,
+      -1, -h,    1),
+    byrow = TRUE,
+    nrow = 3
+  )
+  function(t) {
+    peekm %*% c(
+      S = (1 - I * h / (h - r)) * exp(-h * t),
+      I = (I / (h - r)) * exp(-r * t),
+      T = 1
+    )
+  }
+}
+
+plot_peek_theory <- function(I, h, r) {
+    times <- seq(0, 14, by = 0.1)
+    trajectory <- t(vapply(
+      times,
+      cme_peek_theory(0.6, 1/20, 1/200),
+      vector(mode = "numeric", length = 3)))
+    tdf <- rbind(
+        data.frame(time = times, value = trajectory[, 1], component = "S"),
+        data.frame(time = times, value = trajectory[, 2], component = "I"),
+        data.frame(time = times, value = trajectory[, 3], component = "T")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line()
+}
+# Check that the initial conditions are correct.
+stopifnot(all(abs(cme_peek_theory(.6, 1/20, 1/200)(0) - c(.4, .6, 0)) < 1e-7))
+#times <- seq(0, 5, by = 1)
+#t(vapply(times, cme_peek_theory(0.6, 1/20, 1/200), vector(mode = "numeric", length = 3)))
+plot_peek_theory(.6, 1/20, 1/200)
+```
+
+The two I states are the same state, though, so let's add them together in the
+next plot. Note that, for this model, all individuals are infected in the end,
+for any value of attack rate above zero.
+```{r}
+plot_peek_cme_added <- function(I, h, r) {
+    trajectory <- cme_peek_trajectory(I, h, r)
+    tdf <- rbind(
+        data.frame(time = trajectory[, 1], value = trajectory[, 2], component = "S"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 3] + trajectory[, 4], component = "I")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line() + ylim(0, 1)
+}
+plot_peek_cme_added(0.6, 1/20, 1/200)
+```
+```{r}
+cme_peek_short <- function(I, h, r) {
+  function(t) {
+    Q <- exp(-r * t)
+    A <- 1 - exp(-h * t)
+    I <- ((h - (Q + A) * r) / (h - r)) * I + A * (1 - I)
+    c(
+      S = 1-I,
+      I = I
+    )
+  }
+}
+
+plot_peek_short <- function(I, h, r) {
+    times <- seq(0, 14, by = 0.1)
+    trajectory <- t(vapply(
+      times,
+      cme_peek_short(0.6, 1/20, 1/200),
+      vector(mode = "numeric", length = 2)))
+    tdf <- rbind(
+        data.frame(time = times, value = trajectory[, 1], component = "S"),
+        data.frame(time = times, value = trajectory[, 2], component = "I")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line() + ylim(0, 1)
+}
+# Check that the initial conditions are correct.
+stopifnot(all(abs(cme_peek_short(.6, 1/20, 1/200)(0) - c(.4, .6)) < 1e-7))
+#times <- seq(0, 5, by = 1)
+#t(vapply(times, cme_peek_theory(0.6, 1/20, 1/200), vector(mode = "numeric", length = 3)))
+plot_peek_short(.6, 1/20, 1/200)
+```
 
 ## Our operational constraint
 
@@ -582,148 +733,6 @@ that we can specify, exactly, that we permit $I\rightarrow S\rightarrow I$
 but no other multi-step jumps.
 It has the disadvantage that its matrix form is a product integral and
 it's non-matrix form will have convolutions.
-
-# Derive the Better Equation
-
-Can we derive the peekahead method froma master equation?
-This would mean we write a master equation that allows the
-$I\rightarrow S\rightarrow I$ transition and solve it.
-
-I said that the discrete-time step is an approximation to the master equation
-for small times. That's not quite correct, as you can see by the need above to
-approximate $h \approx \exp(h) -1$. More formally, you can derive
-the single time step probability by expanding the state space to allow only
-one jump per time. That is, take $(S,I,T)$ and create a state space
-$(S,I,T,S',I',T')$ where the primed compartments are purely absorbing.
-That's a larger matrix, but it has nicer eigenvalue properties.
-```{r big_six}
-big_matrix <- function(h, sit_params) with(
-  sit_params,
-  matrix(
-    c(-h,        0,  0, 0, 0, 0,
-       0, -r - tau,  0, 0, 0, 0,
-       0,        0, -u, 0, 0, 0,
-       0,        r,  u, 0, 0, 0,
-       h,        0,  0, 0, 0, 0,
-       0,      tau,  0, 0, 0, 0
-      ),
-    nrow = 6,
-    byrow = TRUE
-    )
-  )
-eigen(big_matrix(1/40, plot_sit_params))
-```
-When we want to allow the $I\rightarrow S\rightarrow I$ transition, that means
-we don't create an $S'$, so eliminate that column and row.
-```{r big_around}
-around_matrix <- function(h, sit_params) with(
-  sit_params,
-  matrix(
-    c(-h,        r,  u, 0, 0,
-       0, -r - tau,  0, 0, 0,
-       0,        0, -u, 0, 0,
-       h,        0,  0, 0, 0,
-       0,      tau,  0, 0, 0
-      ),
-    nrow = 5,
-    byrow = TRUE
-    )
-  )
-around_mat <- around_matrix(1/40, plot_sit_params)
-around_mat
-```
-
-```{r around_eigen}
-stopifnot(det(around_mat) == 0)
-around_eigen <- eigen(around_mat)
-around_eigen
-```
-The key to solving this equation is to diagonalize the matrix,
-so that we can exponentiate.
-```{r exponentiate}
-P <- around_eigen$vectors
-P %*% diag(around_eigen$values) %*% solve(P)
-```
-
-```{r inverse_p}
-solve(P)
-```
-
-But I said I'd do this for the peekahead. Let's return to the simplest
-form of this matrix. Make a version where there is a purely-absorbing
-$I$ called $\tilde{I}$.
-$$
-x' = \left[\begin{array}{ccc}
-  -h & r & 0 \\
-  0 & -r & 0 \\
-  h & 0 & 0
-\end{array}\right]\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right]
-$$
-Note that the steady state for this master equation is $\tilde{I}=1$. It's absorbing.
-How does this diagonalize? It has eigenvalues $(-h, -r, 0)$ and eigenvectors
-$$
-\left[\begin{array}{ccc}
-1 & 1 & 0 \\
-0 & (h-r)/r & 0 \\
-1 & -h / r & 1
-\end{array}\right]
-$$
-Let's check that with some numbers
-```{r peek_around}
-peek_matrix <- function(h, r)
-  matrix(
-    c(-h,  r,  0,
-       0, -r,  0,
-       h,  0,  0
-      ),
-    nrow = 3,
-    byrow = TRUE
-    )
-peek_eigen <- function(h, r) {
-  peig <- matrix(
-    c(1, 1, 0,
-      0, (h - r) / r, 0,
-      1, -h / r, 1),
-    nrow = 3,
-    byrow = TRUE
-  )
-  matrix(c(
-    peig[, 1] / sqrt(sum(peig[, 1] * peig[, 1])),
-    peig[, 2] / sqrt(sum(peig[, 2] * peig[, 2])),
-    peig[, 3] / sqrt(sum(peig[, 3] * peig[, 3]))
-  ), nrow = 3)
-  }
-peek_mat <- peek_matrix(1/25, 1/200)
-peek_mat
-```
-```{r peek_eigen}
-eigen(peek_mat)
-```
-```{r}
-peek_eigen(1/25, 1/200)
-```
-It looks like equations and numerics agree.
-That makes our solution have the form
-$$
-\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
-a_0 e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
-a_1 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
-a_2 \left[\begin{array}{c}0 \\ 0 \\ 1\end{array}\right]
-$$
-Initial values are $(1-I, I, 0)$, so $a_2=0$. This leads to
-$$
-\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
-(1-\frac{h}{h-r}I_0) e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ 1\end{array}\right] +
-\frac{r}{h-r}I_0 e^{-rt}\left[\begin{array}{c}1 \\ (h-r)/r \\ -h/r\end{array}\right] +
-$$
-If we write this out by component, we see $I = I_0e^{-rt}$ and the other $I$ is
-$$
-\tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-h}{h-r}I_0e^{-rt}
-$$
-Together, they give
-$$
-P[I] = I + \tilde{I} = (1-\frac{h}{h-r}I_0)e^{-ht} + \frac{-r}{h-r}I_0e^{-rt}
-$$
 
 
 
