@@ -149,11 +149,25 @@ cases. The more general cases will continue to be discrete-time models,
 so our goal here is to be able to get a good pr-to-ar for a larger discrete-time
 model.
 
+It would be excellent to write the time step so that we can
+solve directly for the attack rate. That means that some part of the matrix
+that does updates is linear in $A$.
+$$
+  x = (M_0 + AM_1) x_0
+$$
+If we have that structure, as we do with the peekahead, then we can
+"read out" the attack rate from the prevalence. This is a really nice property.
+The graph above argues that, while the peekahead is convenient, its errors
+can be large. We would like either a more precise approximation with the same
+attributes, or to show that we can solve the exact problem with the machinery
+on hand.
+
 To that end, we begin by describing a model with attack rate and recovery,
 but lacking treatment. We look at the usual models, solve it exactly, and
 evaluate the peek-ahead approximation. Following that, we look at a model
 just large enough to be a matrix problem. We then ask how to derive
 pr from AR given this matrix formulation.
+
 
 # Discrete-time Forced Susceptible-infected
 
@@ -512,7 +526,9 @@ doing the whole integral from scratch. The Picard iteration starts with a
 solution to an integral and uses this to obtain the next order of the solution.
 It's commonly used to derive power series solutions to integrals. Here,
 it mimics multiple jumps in the Markov chain because we use the single-jump
-solution as the first iteration.
+solution as the first iteration. I'd like to try this in order to 
+see if it's simpler or closer to the peekahead or will be more automatic to calculate
+when the model is larger.
 
 The method solves $y'=F(y,x)$ by assuming a $y_0(x)$ and solving
 $y_n = y(0) + \int_0^x F(y_{n-1}, x)dx$. We have an excellent $y_0$, because we have
@@ -559,8 +575,20 @@ picard_equilibrium <- function(h, r, a, q) {
     ((1 - q) / r - 1 + a / h)
 }
 ```
-We won't be able to read out $A$ because both $A$ and $h$ are in the mix, but we could solve for it.
 
+We could clean up the actual equation, too.
+\begin{eqnarray}
+I^{(1)} &=& I_0 + ht-(ht+rt)+\frac{ht+rt}{ht}A+(h+r)(t-\frac{1}{h}A)I_0 - (h+r)\frac{1}{r}(1-Q)I_0 \\
+&=& I_0 -rt+\frac{ht+rt}{ht}A+(ht+rt)I_0-\frac{ht+rt}{ht}AI_0 - \frac{ht+rt}{rt}(1-Q)I_0 \\
+&=& I_0 -rt+\frac{ht+rt}{ht}A(1-I_0)+(ht+rt)I_0 - \frac{ht+rt}{rt}(1-Q)I_0 \\
+&=& I_0 -rt+\frac{ht+rt}{ht}A(1-I_0)+(ht+rt)I_0 - \frac{ht+rt}{rt}I_0+\frac{ht+rt}{rt}QI_0 \\
+&=& I_0 -rt+(ht+rt)I_0 - \frac{ht+rt}{rt}I_0+\frac{ht+rt}{ht}A(1-I_0)+\frac{ht+rt}{rt}QI_0 \\
+&=& I_0 -rt+(ht+rt)I_0 - \frac{ht+rt}{rt}I_0+\frac{ht+rt}{ht}A(1-I_0)+\frac{ht+rt}{rt}QI_0 \\
+&=& \left(\frac{ht+rt}{ht}A-rt\right)(1-I_0)+\left(\frac{ht+rt}{rt}Q+ht-\frac{ht}{rt}\right)I_0
+\end{eqnarray}
+
+We won't be able to read out $A$ because both $A$ and $h$ are in the mix, but we could solve for it.
+Overall, this isn't any simpler than the exact solution.
 
 ### Comparison of solutions
 Let's compare how each relates $A$ and $I_0$.
@@ -858,19 +886,6 @@ solve(P)
 ```
 
 But I should do this for the peekahead. 
-
-
-
-## Our operational constraint
-
-As a reminder, it would be excellent to write the time step so that we can
-solve directly for the attack rate. That means that some part of the matrix
-that does updates is linear in $A$.
-$$
-  x = (M_0 + AM_1) x_0
-$$
-When we have that structure, as we do with the peekahead, then we can
-"read out" the attack rate from the prevalence.
 
 
 ## A multi-step discrete-time equation
