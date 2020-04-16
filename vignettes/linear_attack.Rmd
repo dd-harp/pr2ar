@@ -75,6 +75,7 @@ plotinverse <- function() {
   exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
   peekahead <- a/(1 - (1 - a) * q)
   one_jump <- a / (1 + a - q)
+  picard <- ((h / (h + r)) - (1 - a / h)) / ((1 - q) / r - 1 + a / h)
   
   pr <- seq(0.3, 0.99, by = 0.01)
   pr2 <- seq(0.3, max(one_jump), by = 0.01)
@@ -102,6 +103,14 @@ plotinverse <- function() {
       lower = min(a),
       upper = max(a))$root
   }
+  picardfun <- approxfun(a, picard)
+  picardpr <- function(y) {
+    uniroot(
+      function(x) {picardfun(x) - y},
+      interval = c(min(pr), max(pr)),
+      lower = min(a),
+      upper = .88)$root
+  }
   plot(
     vector(mode = "numeric", length = 0),
     xlim = c(0.3, 1), ylim = c(-.5, .5),
@@ -116,10 +125,13 @@ plotinverse <- function() {
   oneobs <- vapply(pr2, onepr, 1.0)
   onerelerr <- (oneobs - oneexact) / oneexact
   lines(pr2, onerelerr, col = "purple")
+  picardobs <- vapply(pr, picardpr, 1.0)
+  picardrelerr <- (picardobs - exactexact) / exactexact
+  lines(pr, picardrelerr, col = "blue")
   legend(
     .3, .4,
-    legend = c("peekahead", "single jump"),
-    col = c("green", "purple"),
+    legend = c("peekahead", "single jump", "picard"),
+    col = c("green", "purple", "blue"),
     lty = 1, cex = 0.7)
   abline(h = 0.1, lty = 2)
   abline(h = -0.1, lty = 2)
@@ -143,7 +155,7 @@ evaluate the peek-ahead approximation. Following that, we look at a model
 just large enough to be a matrix problem. We then ask how to derive
 pr from AR given this matrix formulation.
 
-# Discrete time Susceptible-infected
+# Discrete-time Forced Susceptible-infected
 
 ## Simple Forward Equation 
 
@@ -205,6 +217,7 @@ a transtition from $I\rightarrow S\rightarrow I$?
 
 ## Derive the Peekahead
 
+### Master equation with additional transition
 The peekahead addresses an intrinsic problem with the forced SI model.
 As written, it doesn't allow $I\rightarrow S\rightarrow I$. There are two
 ways I can think to fix this. One is a model that has two comparments
@@ -492,6 +505,64 @@ I_m &=& \frac{h-(Q+A)r}{h-r}I_0 + AS_0
 \end{eqnarray}
 The master equation does max out at $I=1$ for very large attack rates.
 
+### Picard Iteration
+
+There's another technique that gives approximations to an integral without
+doing the whole integral from scratch. The Picard iteration starts with a
+solution to an integral and uses this to obtain the next order of the solution.
+It's commonly used to derive power series solutions to integrals. Here,
+it mimics multiple jumps in the Markov chain because we use the single-jump
+solution as the first iteration.
+
+The method solves $y'=F(y,x)$ by assuming a $y_0(x)$ and solving
+$y_n = y(0) + \int_0^x F(y_{n-1}, x)dx$. We have an excellent $y_0$, because we have
+the single-jump solution, so let's integrate it to get $y_1$.
+$$
+\left[\begin{array}{c}S^{(1)} \\ I^{(1)}\end{array}\right] =
+\left[\begin{array}{c}1-I_0 \\ I_0\end{array}\right] + 
+\int_0^t \left[\begin{array}{cc}-h & r \\ h & -r\end{array}\right]
+\left[\begin{array}{c}S^{(0)} \\ I^{(0)}\end{array}\right]dt
+$$
+If we leave the matrix, this means
+$$
+I^{(1)} = I_0 + h\int_0^t(1-I^{(0)})dt - r\int_0^tI^{(0)}dt = I_0 + ht - (h+r)\int_0^tI^{(0)}dt
+$$
+In order to integrate our $I^{(0)}$, we note two integrals.
+$$
+\int_0^t Adt = \int_0^t(1-e^{-ht})dt = \left.t+\frac{1}{h}e^{-ht}\right|_0^t = t +\frac{1}{h}(e^{-ht}-1)=t-\frac{1}{h}A
+$$
+$$
+\int_0^tQdt = \int_0^te^{-rt}dt = \left.-\frac{1}{r}e^{-rt}\right|_0^t = \frac{1}{r}(1-e^{-rt}) = \frac{1}{r}(1-Q)
+$$
+As a result, our integral is
+$$
+\int_0^t\left(A(1-I_0) + QI_0\right)dt = (1-I_0)(t-\frac{1}{h}A) + I_0\frac{1}{r}(1-Q)
+$$
+We can write out the solution and ask our favorite question,
+what is PfPR as a function of attack rate?
+\begin{eqnarray}
+I^{(1)} &=& I_0 + ht-(h+r)\left((1-I_0)(t-\frac{1}{h}A) + I_0\frac{1}{r}(1-Q)\right) \\
+&=& I_0 + ht-(h+r)\left((t-\frac{1}{h}A)-I_0(t-\frac{1}{h}A) + I_0\frac{1}{r}(1-Q)\right) \\
+&=& I_0 + ht-(h+r)(t-\frac{1}{h}A)-(h+r)\left(-(t-\frac{1}{h}A) + \frac{1}{r}(1-Q)\right)I_0 \\
+&=& I_0 + ht-(h+r)(t-\frac{1}{h}A)-(h+r)\left(-(t-\frac{1}{h}A) + \frac{1}{r}(1-Q)\right)I_0 \\
+\frac{1}{h+r}(I^{(1)}-I_0) & = & \frac{h}{h+r}t-(t-\frac{1}{h}A)-\left(-(t-\frac{1}{h}A) + \frac{1}{r}(1-Q)\right)I_0 \\
+\frac{1}{ht+rt}(I^{(1)}-I_0) & = & \frac{ht}{ht+rt}-(1-\frac{1}{ht}A)-\left(-(1-\frac{1}{ht}A) + \frac{1}{rt}(1-Q)\right)I_0
+\end{eqnarray}
+Therefore, at equilibrium when $I=I_0$,
+$$
+I_0 = \left(\frac{ht}{ht+rt}-(1-\frac{1}{ht}A)\right)\left[-(1-\frac{1}{ht}A) + \frac{1}{rt}(1-Q)\right]^{-1}
+$$
+
+```{r picard_iteration}
+picard_equilibrium <- function(h, r, a, q) {
+  ((h / (h + r)) - (1 - a / h)) /
+    ((1 - q) / r - 1 + a / h)
+}
+```
+We won't be able to read out $A$ because both $A$ and $h$ are in the mix, but we could solve for it.
+
+
+### Comparison of solutions
 Let's compare how each relates $A$ and $I_0$.
 ```{r plot_to_see_i_range}
 plotirange <- function() {
@@ -499,7 +570,8 @@ plotirange <- function() {
   q <- exp(-r)
   a <- seq(0.01, 1, by = 0.002)
   h <- -log(1 - a)
-  modified_peek <- a / (1 + a - 0.5 * (1 + q))
+  # modified_peek <- a / (1 + a - 0.5 * (1 + q))
+  modified_peek <- picard_equilibrium(h, r, a, q)
   exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
   peekahead <- a/(1 - (1 - a) * q)
   one_jump <- a / (1 + a - q)
@@ -514,12 +586,13 @@ plotirange <- function() {
   abline(h = 1, col = "blue")
   legend(
     .6, .8,
-    legend = c("peekahead", "modified peekahead", "exact master equation", "single jump"),
+    legend = c("peekahead", "picard", "exact master equation", "single jump"),
     col = c("green", "orange", "red", "purple"),
     lty = 1)
 }
 plotirange()
 ```
+
 Notice that, for large PR, a small change in PR is a large change in attack rate.
 That means a small error in PR is a large error in attack rate.
 
