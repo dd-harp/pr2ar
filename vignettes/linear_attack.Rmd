@@ -1,13 +1,17 @@
 ---
 title: "Linear Attack Rate"
 output:
+  html_document:
+    df_print: paged
+    toc: yes
   pdf_document:
-    toc: true
-    number_sections: true
-vignette: >
-  %\VignetteIndexEntry{Linear_attack_rate}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
+    keep_md: yes
+    keep_tex: yes
+    number_sections: yes
+    toc: yes
+bibliography: linear_attack.bib
+vignette: |
+  %\VignetteIndexEntry{Linear_attack_rate} %\VignetteEngine{knitr::rmarkdown} %\VignetteEncoding{UTF-8}
 ---
 ```{r load_libraries, include = FALSE}
 library(deSolve)
@@ -229,8 +233,9 @@ a transtition from $I\rightarrow S\rightarrow I$?
 
 
 
-## Derive the Peekahead
 
+
+## Approximations to the Master Equation
 ### Master equation with additional transition
 The peekahead addresses an intrinsic problem with the forced SI model.
 As written, it doesn't allow $I\rightarrow S\rightarrow I$. There are two
@@ -633,6 +638,56 @@ How we solve for the attack rate depends on which method works well
 in the context of this data. We can understand that better if we expand
 the model so that it is, at least, a small matrix.
 
+## Looking for Peekahead
+
+Let's figure out how to help ourselves solve for the attack rate.
+Now that we are familiar with the master equation, can we construct
+a discrete time step that's easy to solve? The general form is a matrix
+exponential.
+$$
+x = e^{At}x_0
+$$
+We could either rewrite this exponential so that the attack rate is separate
+or pull out terms in a solution to the matrix exponential.
+
+
+### Strang Splitting
+For instance, we could separate the attack rate in the exponential by
+writing it as the sum of a part that has $h$ and a part that doesn't.
+The problem is that these two parts won't usually commute, and the exponential
+is simple to calculate only if they commute. The Baker-Campbell-Hausdorff lemma
+tells us the error.
+$$
+e^{A(h) + A(\bar{h})} \approx e^{A(h)}e^{A(\bar{h})} + e^{A(h)A(\bar{h})-A(\bar{h})A(h)}+\cdots
+$$
+You can mitigate this error by rewriting using Strang splitting [@celledoni2001methods].
+$$
+e^{A(h)t + A(\bar{h})t} \approx e^{A(h)t/2}e^{A(\bar{h})}e^{A(h)t/2}
+$$
+For our problem, the matrix for $A(h)$ is that part of the transition matrix
+that has the attack rate in it. It's one column with two entries, and $A(\bar{h})$ is the rest of
+the transition matrix.
+
+
+### Polynomial methods for solving the matrix exponential
+
+We have been solving for the discrete time step using integration of
+the matrix differential equation, but we could, instead, write the solution 
+as a matrix exponential and solve that. For instance, Newton interpolation
+is a way to solve a matrix exponential such that you can pull out terms [@moler2003nineteen].
+$$
+  e^{tA} = e^{\lambda_1t}I+\sum_{j=2}^n[\lambda_1,\ldots,\lambda_j]\prod_{k=1}^{j-1}(A-\lambda_kI)
+$$
+Here, the symbol with the dots is a divided diference. It's defined recursively by
+\begin{eqnarray}
+[\lambda_1,\lambda_2] & = & (e^{\lambda_1t}-e^{\lambda_2t})/(\lambda_1-\lambda_2) \\
+[\lambda_1,\ldots,\lambda_{k+1}] & = & \frac{[\lambda_1,\ldots,\lambda_k]-[\lambda_2,\ldots,\lambda_{k+1}]}{\lambda_1-\lambda_{k+1}}
+\end{eqnarray}
+This equation needs adjustment if eigenvalues are the same, or nearly the same,
+but you see that it's written in terms of exponentials in the eigenvalues which, in
+this case includes the attack rate. It will also be a function of the log of the attack rate,
+but maybe we can use this to derive an analytic form of an iterative equation for the
+attack rate.
 
 
 # An S--I--T Model for Attack Rate
