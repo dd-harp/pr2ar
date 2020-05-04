@@ -515,14 +515,6 @@ stopifnot(all(abs(peek_si(.6, 1/20, 1/200)(0) - c(.4, .6)) < 1e-7))
 plot_peek_si(.6, 1/20, 1/200)
 ```
 
-The three equations we now have are a single-jump, a peekahead, and
-a master equation.
-\begin{eqnarray}
-I_j &= &A(1-I_0) + QI_0\\
-I_p &=&A(1-QI_0) + QI_0 \\
-I_m &=& \frac{h-(Q+A)r}{h-r}I_0 + AS_0
-\end{eqnarray}
-The master equation does max out at $I=1$ for very large attack rates.
 
 ### Picard Iteration
 
@@ -596,8 +588,21 @@ We won't be able to read out $A$ because both $A$ and $h$ are in the mix, but we
 Overall, this isn't any simpler than the exact solution.
 
 ### Comparison of solutions
+
+The four equations we now have are a single-jump, a peekahead,
+a master equation, and the Picard (c) iteration. I've added the Strang-splitting
+method, derived in a later section.
+\begin{eqnarray}
+I_j &= &A(1-I_0) + QI_0\\
+I_p &=&A(1-QI_0) + QI_0 \\
+I_m &=& \frac{h-(Q+A)r}{h-r}I_0 + AS_0 \\
+I_c &=& \left(\frac{ht+rt}{ht}A-rt\right)(1-I_0)+\left(\frac{ht+rt}{rt}Q+ht-\frac{ht}{rt}\right)I_0 \\
+I_s &=& A^{1/2}\left[(A^{1/2}-A)(1-I_0)+(Q-I_0)^2\right] + QI_0
+\end{eqnarray}
+The master equation does max out at $I=1$ for very large attack rates.
+
 Let's compare how each relates $A$ and $I_0$.
-```{r plot_to_see_i_range}
+```{r plot_to_see_i_range, echo = FALSE}
 plotirange <- function() {
   r <- 14 / 200
   q <- exp(-r)
@@ -656,17 +661,69 @@ For instance, we could separate the attack rate in the exponential by
 writing it as the sum of a part that has $h$ and a part that doesn't.
 The problem is that these two parts won't usually commute, and the exponential
 is simple to calculate only if they commute. The Baker-Campbell-Hausdorff lemma
-tells us the error.
+tells us that the error is $O(h)$ if we do a simple split.
 $$
 e^{A(h) + A(\bar{h})} \approx e^{A(h)}e^{A(\bar{h})} + e^{A(h)A(\bar{h})-A(\bar{h})A(h)}+\cdots
 $$
-You can mitigate this error by rewriting using Strang splitting [@celledoni2001methods].
+You can mitigate this error, converting to to $O(h^2)$,
+by rewriting using Strang splitting [@celledoni2001methods].
 $$
 e^{A(h)t + A(\bar{h})t} \approx e^{A(h)t/2}e^{A(\bar{h})}e^{A(h)t/2}
 $$
 For our problem, the matrix for $A(h)$ is that part of the transition matrix
 that has the attack rate in it. It's one column with two entries, and $A(\bar{h})$ is the rest of
 the transition matrix.
+
+If we take the susceptible-infected-treated example, what does Strang
+splitting look like? Define $s = e^{-ht/2}$.
+$$
+  e^{A(h)t/2} = \left[\begin{array}{ccc}
+  e^{-ht/2} & 0 & 0 \\
+  1-e^{-ht/2} & 1 & 0 \\
+  0 & 0 & 1
+  \end{array}\right] =
+  \left[\begin{array}{ccc}
+  s & 0 & 0 \\
+  1-s & 1 & 0 \\
+  0 & 0 & 1
+  \end{array}\right]
+$$
+If the attack rate is $\alpha = 1-e^{-ht}$, then $s=(1-\alpha)^{1/2}$.
+It's a simple transformation.
+The resulting update for the state will be polynomial in the square root of the
+attack rate. That should be much easier to optimize than the general matrix.
+The middle part, $e^{A(\bar{h})t}$, is a little complicated, but so is the actual master equation,
+so that's to be expected. The key is that it doesn't include $h$ or $\alpha$.
+
+If we do this just for the little S-I matrix, we get
+$$
+  e^{A(\bar{h})} = \exp\left[\begin{array}{cc}0 & r \\ 0 & -r\end{array}\right]
+  = \left[\begin{array}{cc}1 & 1-e^{-r} \\ 0 & e^{-r}\end{array}\right]
+$$
+As above, we can say $Q=e^{-r}$. Then the whole solution is
+$$
+x = \left[\begin{array}{cc}
+  s & 0  \\
+  1-s & 1 
+  \end{array}\right]
+  \left[\begin{array}{cc}1 & 1-Q \\ 0 & Q\end{array}\right]
+  \left[\begin{array}{cc}
+  s & 0  \\
+  1-s & 1 
+  \end{array}\right]x_0 =
+  \left[\begin{array}{cc}
+  s^2(1-s)(1-Q) & s(1-Q)  \\
+  s(1-s)^2+Q(1-s) & (1-s)(1-Q)+Q 
+  \end{array}\right]x_0
+$$
+For just the infected state, that's
+$$
+I = \left(s(1-s)^2+Q(1-s)\right)(1-I_0) + \left((1-s)(1-Q)+Q\right)I
+$$
+If my math is correct (not likely), then this comes out to a third-order equation in $(1-s)$,
+$$
+  (1-s)\left[(1-s)(1-I_0)-(1-s)^2(1-I_0)+(Q-I_0)^2\right] + (QI_0-I) = 0
+$$
 
 
 ### Polynomial methods for solving the matrix exponential
@@ -688,6 +745,100 @@ but you see that it's written in terms of exponentials in the eigenvalues which,
 this case includes the attack rate. It will also be a function of the log of the attack rate,
 but maybe we can use this to derive an analytic form of an iterative equation for the
 attack rate.
+
+This polynomial method doesn't work if eigenvalues are equal. You have to fuss with
+it. It's helpful for analytical 3x3 matrices, though.
+
+
+### Convergence using matrix derivative
+
+When we say we want a peekahead we mean that we want a fast way to invert
+a time step that's a matrix. You can rarely invert a real system analytically,
+but you can make the inversion much faster if you can compute the derivative of
+the function. Let's do that here, because it will make optimization much faster.
+
+Suppose we have a transition matrix. How can we get its derivative with
+respect to the attack rate part? Our time step is
+$$
+x(t) = e^{A(h)t}x_0
+$$
+You can also see it as $x(h)$ instead of $x(t)$.
+We want to know what the attack rate $h$ is. We could make the whole problem linear,
+but it has been trouble to get the problem, linearized in $e^{-ht}$, to converge. Another
+way to make this easier is to find the derivative of the problem with respect to
+$h$. Then we can use an Newton step for fast convergence.
+$$
+x(h) \approx x(h_0) + \left.\nabla_h x\right|_{h_0}(h-h_0)
+$$
+Solve that to get the iteration. While $x$ is a vector, we're trying to match
+the component for *Pf*PR, so we project it out using a projection matrix $P$.
+$$
+h = h_0 + \frac{P(x(h)-x(h_0))}{P\nabla_h x}
+$$
+That projection could cause problems for stability. We could be better off reducing
+a 2-norm. It's minimization of the difference between two vectors with respect to a scalar.
+$$
+  \min_h ||  x(h_0) + \nabla_h x(h-h_0) - x(h) ||_2
+$$
+Think of it as two fixed vectors, $v_0$ and $v_1$, and you're minimizing $(v_0-hv_1)^t(v_0-hv_1)$.
+
+How do we find the derivative with respect to $h$, given that we are going to construct these
+matrices in automated ways? We have to see the derivative with respect
+to $h$ as a matrix-directional derivative. Use notation from [@najfeld1995derivatives].
+$$
+  D_V(t,A) = \lim_{h\rightarrow 0}\frac{1}{h}\left(e^{t(A+hV)}-e^{tA}\right)
+$$
+The change in x uses this derivative.
+$$
+\nabla_{h}x = D_V(t,A) x_0
+$$
+That paper gives us a nice way to get the directional derivative. If we construct
+a larger matrix with a particular block form and exponentiate it, then a sub-block
+of the result is the derivative we want. This comes from a nice result about
+functions of block-triangular matrices [@parlett1976recurrence].
+Construct the larger matrix, including our attack rate in the upper-right.
+$$
+B = \left[\begin{array}{cc}A & V \\ 0 & A\end{array}\right]
+$$
+Then exponentiate it.
+$$
+e^B = \left[\begin{array}{cc}e^A & D_V(t, A) \\ 0 & e^A\end{array}\right]
+$$
+
+Now demonstrate that we can calculate this.
+Take our matrix from the susceptible-infectious-treatment example.
+$$
+A = \left[\begin{array}{ccc}-h & r & u \\ h & -r-\tau & 0 \\ 0 & \tau & -u\end{array}\right]
+$$
+That same matrix as code can be split into two parts.
+```{r derivatives}
+A <- matrix(c(
+  -.4, .1, .2,
+  .4, -.15, 0,
+  0, .15, -.2), nrow = 3, byrow = TRUE
+  )
+vscale <- 0.1  # Scale to make matrix exponential more efficient.
+V <- vscale * matrix(c(
+  -1, 0, 0,
+  1, 0, 0,
+  0, 0, 0), nrow = 3, byrow = TRUE
+  )
+A_minus_V <- matrix(c(
+  0, .1, .2,
+  0, -.15, 0,
+  0, .05, -.2), nrow = 3, byrow = TRUE
+  )
+```
+I can calculate the derivative with respect to the $h$ portion of the matrix.
+The matrix package, in R, has a numerical matrix exponential that does the right thing
+in most cases. It combines splitting with rescaling and raising the matrix to a power.
+We can use that to numerically calculate the derivative from the transition matrix.
+```{r calc_derivative}
+doubled <- rbind(cbind(A, V), cbind(matrix(0, 3, 3), A))
+exp_doubled <- expm::expm(doubled)
+directional <- exp_doubled[1:3, 4:6] / vscale
+directional
+```
 
 
 # An S--I--T Model for Attack Rate
@@ -1163,7 +1314,7 @@ It has the disadvantage that its matrix form is a product integral and
 it's non-matrix form will have convolutions.
 
 
-
+# References
 
 
 
