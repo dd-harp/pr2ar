@@ -1,13 +1,13 @@
 ---
 title: "Linear Attack Rate"
 output:
-  html_document:
-    df_print: paged
-    toc: yes
   pdf_document:
     keep_md: yes
     keep_tex: yes
     number_sections: yes
+    toc: yes
+  html_document:
+    df_print: paged
     toc: yes
 bibliography: linear_attack.bib
 vignette: |
@@ -589,12 +589,14 @@ Overall, this isn't any simpler than the exact solution.
 
 ### Comparison of solutions
 
-The four equations we now have are a single-jump, a peekahead,
+The four equations we now have are a single-jump, operator splitting with the
+attack rate first ($p-$), operator splitting with the attack rate last ($p+$),
 a master equation, and the Picard (c) iteration. I've added the Strang-splitting
-method, derived in a later section.
+method, derived in a later section. I HAVEN'T CHECKED the STRANG SPLITTING EQUATION YET.
 \begin{eqnarray}
 I_j &= &A(1-I_0) + QI_0\\
-I_p &=&A(1-QI_0) + QI_0 \\
+I_{p-} &=&A(1-QI_0) + QI_0 \\
+I_{p+} & = & \alpha Q(1-I_0)+QI_0\\
 I_m &=& \frac{h-(Q+A)r}{h-r}I_0 + AS_0 \\
 I_c &=& \left(\frac{ht+rt}{ht}A-rt\right)(1-I_0)+\left(\frac{ht+rt}{rt}Q+ht-\frac{ht}{rt}\right)I_0 \\
 I_s &=& A^{1/2}\left[(A^{1/2}-A)(1-I_0)+(Q-I_0)^2\right] + QI_0
@@ -602,6 +604,7 @@ I_s &=& A^{1/2}\left[(A^{1/2}-A)(1-I_0)+(Q-I_0)^2\right] + QI_0
 The master equation does max out at $I=1$ for very large attack rates.
 
 Let's compare how each relates $A$ and $I_0$.
+
 ```{r plot_to_see_i_range, echo = FALSE}
 plotirange <- function() {
   r <- 14 / 200
@@ -656,7 +659,7 @@ We could either rewrite this exponential so that the attack rate is separate
 or pull out terms in a solution to the matrix exponential.
 
 
-### Strang Splitting
+### Operator Splitting
 For instance, we could separate the attack rate in the exponential by
 writing it as the sum of a part that has $h$ and a part that doesn't.
 The problem is that these two parts won't usually commute, and the exponential
@@ -665,8 +668,40 @@ tells us that the error is $O(h)$ if we do a simple split.
 $$
 e^{A(h) + A(\bar{h})} \approx e^{A(h)}e^{A(\bar{h})} + e^{A(h)A(\bar{h})-A(\bar{h})A(h)}+\cdots
 $$
-You can mitigate this error, converting to to $O(h^2)$,
-by rewriting using Strang splitting [@celledoni2001methods].
+The parts of the transition matrix with and without the force of infection don't commute,
+so splitting this operator is an approximation. It is, however, exactly the approximation
+that leads to the first version of the peekahead that we used.
+Here, we will use $\alpha=1-e^{-ht}$.
+$$
+e^{At}=e^{A(h)t}e^{A(\bar{h})t} = \left[\begin{array}{cc}
+  1-\alpha & 0  \\
+  \alpha & 1 
+  \end{array}\right]\left[\begin{array}{cc}1 & 1-Q \\ 0 & Q\end{array}\right]
+  =\left[\begin{array}{cc}1-\alpha & (1-\alpha)(1-Q) \\ \alpha & \alpha(1-Q)+Q\end{array}\right]
+$$
+If we take the infectious component, then that becomes Dave's original peekahead.
+$$
+I = \alpha(1-I_0)+\alpha(1-Q)I_0+QI_0=\alpha(1-QI_0)+QI_0
+$$
+What if we do the split in the opposite direction? That should give us a different
+approximation.
+$$
+e^{At}=e^{A(\bar{h})t}e^{A(h)t} =
+\left[\begin{array}{cc}1 & 1-Q \\ 0 & Q\end{array}\right]
+\left[\begin{array}{cc}
+  1-\alpha & 0  \\
+  \alpha & 1 
+  \end{array}\right]
+  =\left[\begin{array}{cc}1-\alpha+(1-Q)\alpha & (1-Q) \\ Q\alpha & Q\end{array}\right]
+$$
+That leads to an equation for $I$ of the form.
+$$
+I = \alpha Q(1-I_0)+QI_0
+$$
+
+Both of those derivations have error that's $O(h)$. The usual method to fix that is to use
+Strang splitting, which means splitting the transition matrix into three pieces
+[@celledoni2001methods].
 $$
 e^{A(h)t + A(\bar{h})t} \approx e^{A(h)t/2}e^{A(\bar{h})}e^{A(h)t/2}
 $$
@@ -724,6 +759,8 @@ If my math is correct (not likely), then this comes out to a third-order equatio
 $$
   (1-s)\left[(1-s)(1-I_0)-(1-s)^2(1-I_0)+(Q-I_0)^2\right] + (QI_0-I) = 0
 $$
+I HAVEN'T CHECKED the STRANG SPLITTING EQUATION YET.
+
 
 
 ### Polynomial methods for solving the matrix exponential
@@ -733,12 +770,12 @@ the matrix differential equation, but we could, instead, write the solution
 as a matrix exponential and solve that. For instance, Newton interpolation
 is a way to solve a matrix exponential such that you can pull out terms [@moler2003nineteen].
 $$
-  e^{tA} = e^{\lambda_1t}I+\sum_{j=2}^n[\lambda_1,\ldots,\lambda_j]\prod_{k=1}^{j-1}(A-\lambda_kI)
+  e^{tA} = e^{\lambda_1t}I+\sum_{j=2}^n[\lambda_1,\dots,\lambda_j]\prod_{k=1}^{j-1}(A-\lambda_kI)
 $$
 Here, the symbol with the dots is a divided diference. It's defined recursively by
 \begin{eqnarray}
 [\lambda_1,\lambda_2] & = & (e^{\lambda_1t}-e^{\lambda_2t})/(\lambda_1-\lambda_2) \\
-[\lambda_1,\ldots,\lambda_{k+1}] & = & \frac{[\lambda_1,\ldots,\lambda_k]-[\lambda_2,\ldots,\lambda_{k+1}]}{\lambda_1-\lambda_{k+1}}
+{[\lambda_1,\dots,\lambda_{k+1}]} & = & \frac{[\lambda_1,\dots,\lambda_k]-[\lambda_2,\dots,\lambda_{k+1}]}{\lambda_1-\lambda_{k+1}}
 \end{eqnarray}
 This equation needs adjustment if eigenvalues are the same, or nearly the same,
 but you see that it's written in terms of exponentials in the eigenvalues which, in
@@ -748,7 +785,6 @@ attack rate.
 
 This polynomial method doesn't work if eigenvalues are equal. You have to fuss with
 it. It's helpful for analytical 3x3 matrices, though.
-
 
 ### Convergence using matrix derivative
 
