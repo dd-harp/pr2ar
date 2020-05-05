@@ -38,6 +38,13 @@ the time window, but they can't recover and get infected again. The peek ahead
 is an approximation that emphasizes the ability to get reinfected. The master
 equation is the exact solution for the case where a person can recover and get reinfected.
 
+Following is a plot of an exact master equation for the system and
+several approximations. Two of those approximations have the happy
+behavior that they make it very, very easy to find the attack rate that
+would give a particular PfPR at equilibrium. Those two are the
+match with the worst error, the peekahead, and the match with the best
+error, the strang split.
+
 ```{r plot_to_see_i_range2, echo = FALSE, fig.width = 5, fig.height = 4}
 plotirange <- function() {
   r <- 14 / 200
@@ -46,6 +53,8 @@ plotirange <- function() {
   h <- -log(1 - a)
   exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
   peekahead <- a/(1 - (1 - a) * q)
+  sq <- sqrt(q)
+  strang <- (a * sq * (2 - sq)) / (1 + a * sq - q)
   one_jump <- a / (1 + a - q)
   plot(vector(mode = "numeric", length = 0),
        xlim = c(0, 1), ylim = c(0, 1),
@@ -53,13 +62,14 @@ plotirange <- function() {
        main = "Comparison of Two week Outcomes",
        cex = 0.5)
   lines(a, peekahead, col = "green")
+  lines(a, strang, col = "blue")
   lines(a, exact, col = "red")
   lines(a, one_jump, col = "purple")
   abline(h = 1, col = "blue")
   legend(
     .5, .8,
-    legend = c("peekahead", "exact master equation", "single jump"),
-    col = c("green", "red", "purple"),
+    legend = c("peekahead", "exact master equation", "single jump", "strang"),
+    col = c("green", "red", "purple", "blue"),
     lty = 1, cex = 0.7)
 }
 plotirange()
@@ -78,11 +88,14 @@ plotinverse <- function() {
   h <- -log(1 - a)
   exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
   peekahead <- a/(1 - (1 - a) * q)
+  sq <- sqrt(q)
+  strang <- (a * sq * (2 - sq)) / (1 + a * sq - q)
   one_jump <- a / (1 + a - q)
   picard <- ((h / (h + r)) - (1 - a / h)) / ((1 - q) / r - 1 + a / h)
   
   pr <- seq(0.3, 0.99, by = 0.01)
   pr2 <- seq(0.3, max(one_jump), by = 0.01)
+  pr3 <- seq(0.3, 0.95, by = 0.01)
   exactfun <- approxfun(a, exact)
   exactpr <- function(y) {
     uniroot(
@@ -96,6 +109,14 @@ plotinverse <- function() {
     uniroot(
       function(x) {peekfun(x) - y},
       interval = c(min(pr), max(pr)),
+      lower = min(a),
+      upper = max(a))$root
+  }
+  strangfun <- approxfun(a, strang)
+  strangpr <- function(y) {
+    uniroot(
+      function(x) {strangfun(x) - y},
+      interval = c(min(pr3), max(pr3)),
       lower = min(a),
       upper = max(a))$root
   }
@@ -125,17 +146,20 @@ plotinverse <- function() {
   peekobs <- vapply(pr, peekpr, 1.0)
   peekrelerr <- (peekobs - exactexact) / exactexact
   lines(pr, peekrelerr, col = "green")
+  strangobs <- vapply(pr3, strangpr, 1.0)
+  strangrelerr <- (strangobs - exactexact[1:length(pr3)]) / exactexact[1:length(pr3)]
+  lines(pr3, strangrelerr, col = "blue")
   oneexact <- vapply(pr2, exactpr, 1.0)
   oneobs <- vapply(pr2, onepr, 1.0)
   onerelerr <- (oneobs - oneexact) / oneexact
   lines(pr2, onerelerr, col = "purple")
   picardobs <- vapply(pr, picardpr, 1.0)
   picardrelerr <- (picardobs - exactexact) / exactexact
-  lines(pr, picardrelerr, col = "blue")
+  lines(pr, picardrelerr, col = "orange")
   legend(
     .3, .4,
-    legend = c("peekahead", "single jump", "picard"),
-    col = c("green", "purple", "blue"),
+    legend = c("peekahead", "single jump", "picard", "strang"),
+    col = c("green", "purple", "orange", "blue"),
     lty = 1, cex = 0.7)
   abline(h = 0.1, lty = 2)
   abline(h = -0.1, lty = 2)
@@ -592,18 +616,19 @@ Overall, this isn't any simpler than the exact solution.
 The four equations we now have are a single-jump, operator splitting with the
 attack rate first ($p-$), operator splitting with the attack rate last ($p+$),
 a master equation, and the Picard (c) iteration. I've added the Strang-splitting
-method, derived in a later section. I HAVEN'T CHECKED the STRANG SPLITTING EQUATION YET.
+methods ($s-$ and $s+$), derived in a later section. I HAVEN'T CHECKED the STRANG SPLITTING EQUATION YET.
 \begin{eqnarray}
 I_j &= &A(1-I_0) + QI_0\\
 I_{p-} &=&A(1-QI_0) + QI_0 \\
 I_{p+} & = & \alpha Q(1-I_0)+QI_0\\
 I_m &=& \frac{h-(Q+A)r}{h-r}I_0 + AS_0 \\
 I_c &=& \left(\frac{ht+rt}{ht}A-rt\right)(1-I_0)+\left(\frac{ht+rt}{rt}Q+ht-\frac{ht}{rt}\right)I_0 \\
-I_s &=& A^{1/2}\left[(A^{1/2}-A)(1-I_0)+(Q-I_0)^2\right] + QI_0
+I_{s-} & = &  A Q^{1/2}(2-I_0-Q^{1/2})+QI_0 \\
+I_{s+} &=& A^{1/2}\left[(A^{1/2}-A)(1-I_0)+(Q-I_0)^2\right] + QI_0
 \end{eqnarray}
 The master equation does max out at $I=1$ for very large attack rates.
 
-Let's compare how each relates $A$ and $I_0$.
+Let's compare how each relates $A$ and $I$ at equilibrium, when $I=I_0$.
 
 ```{r plot_to_see_i_range, echo = FALSE}
 plotirange <- function() {
@@ -615,20 +640,23 @@ plotirange <- function() {
   modified_peek <- picard_equilibrium(h, r, a, q)
   exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
   peekahead <- a/(1 - (1 - a) * q)
+  sq <- sqrt(q)
+  strang <- (a * sq * (2 - sq)) / (1 + a * sq - q)
   one_jump <- a / (1 + a - q)
   plot(vector(mode = "numeric", length = 0),
        xlim = c(0, 1), ylim = c(0, 1),
        xlab = "attack rate", ylab = "PfPR",
        main = "Comparison of Two week Outcomes")
   lines(a, peekahead, col = "green")
+  lines(a, strang, col = "blue")
   lines(a, modified_peek, col = "orange")
   lines(a, exact, col = "red")
   lines(a, one_jump, col = "purple")
   abline(h = 1, col = "blue")
   legend(
     .6, .8,
-    legend = c("peekahead", "picard", "exact master equation", "single jump"),
-    col = c("green", "orange", "red", "purple"),
+    legend = c("peekahead", "picard", "exact master equation", "single jump", "strang"),
+    col = c("green", "orange", "red", "purple", "blue"),
     lty = 1)
 }
 plotirange()
@@ -709,8 +737,37 @@ For our problem, the matrix for $A(h)$ is that part of the transition matrix
 that has the attack rate in it. It's one column with two entries, and $A(\bar{h})$ is the rest of
 the transition matrix.
 
-If we take the susceptible-infected-treated example, what does Strang
-splitting look like? Define $s = e^{-ht/2}$.
+If we take the susceptible-infected-treated example, we could split in two different ways.
+Either put the attack rate in the middle or put the attack rate on the outsides.
+Putting the attack rate in the middle would make the problem linear in attack rate.
+$$
+  e^{At} = e^{A(\bar{h})t/2}e^{A(h)}e^{A(\bar{h})t/2}
+$$
+This comes to
+$$
+\left[\begin{array}{cc}1 & 1-Q^{1/2} \\ 0 & Q^{1/2}\end{array}\right]
+\left[\begin{array}{cc}
+  1-\alpha & 0  \\
+  \alpha & 1 
+  \end{array}\right]
+\left[\begin{array}{cc}1 & 1-Q^{1/2} \\ 0 & Q^{1/2}\end{array}\right]
+$$
+This comes to
+$$
+\left[\begin{array}{cc}
+  (1-\alpha)+\alpha(1-Q^{1/2}) & (1-\alpha)(1-Q^{1/2})+\alpha(1-Q^{1/2})^2+Q^{1/2}(1-Q^{1/2})  \\
+  \alpha Q^{1/2} & \alpha Q^{1/2}(1-Q^{1/2})+Q 
+  \end{array}\right]
+$$
+so that the equation for $I$ is
+$$
+I = \alpha Q^{1/2}(2-I_0-Q^{1/2})+QI_0
+$$
+so that we can solve for the attack rate by solving for $\alpha$.
+$$
+\alpha=\frac{I-QI_0}{Q^{1/2}(2-I_0-Q^{1/2})}
+$$
+If you put the attack rate on the outside, you'd want to define $s = e^{-ht/2}$.
 $$
   e^{A(h)t/2} = \left[\begin{array}{ccc}
   e^{-ht/2} & 0 & 0 \\
