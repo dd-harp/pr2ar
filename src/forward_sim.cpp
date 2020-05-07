@@ -63,7 +63,14 @@ SEXP simA1(const double Q,
         Eigen::MatrixXd W = makeWc(Q, Tx(i - 1));
         double numer = X[i] - D.transpose() * V * Y;
         double denom = D.transpose() * W * Y;
-        A[i] = (numer / denom);
+        double A_temp = (numer / denom);
+        if(A_temp > 1) {
+            A_temp = 1;
+        }
+        if(A_temp < 0) {
+            A_temp = 0;
+        }
+        A[i] = A_temp;
         B = makeBc(A[i], Q, Tx(i));
         Y = B * Y;
     }
@@ -93,7 +100,14 @@ SEXP simA2(const double Q,
         Eigen::MatrixXd V2 = makeVc(Q, Tx(i));
         double numer = X[i] - D.transpose() * V2 * V1 * Y;
         double denom = D.transpose() * V2 * W * Y;
-        A[i - 1] = (numer / denom);
+        double A_temp = (numer / denom);
+        if(A_temp > 1) {
+            A_temp = 1;
+        }
+        if(A_temp < 0) {
+            A_temp = 0;
+        }
+        A[i - 1] = A_temp;
         B = makeBc(A[i - 1], Q, Tx(i - 1));
         Y = B * Y;
     }

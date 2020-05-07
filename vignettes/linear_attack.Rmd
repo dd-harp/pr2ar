@@ -1,0 +1,1413 @@
+---
+title: "Linear Attack Rate"
+output:
+  pdf_document:
+    keep_md: yes
+    keep_tex: yes
+    number_sections: yes
+    toc: yes
+  html_document:
+    df_print: paged
+    toc: yes
+bibliography: linear_attack.bib
+vignette: |
+  %\VignetteIndexEntry{Linear_attack_rate} %\VignetteEngine{knitr::rmarkdown} %\VignetteEncoding{UTF-8}
+---
+```{r load_libraries, include = FALSE}
+library(deSolve)
+library(ggraph)
+library(ggplot2)
+library(igraph)
+```
+
+# Overview
+
+The observational data we have about malaria is binned in year, month, or week
+intervals. We would like to interpret this data using simple models that relate
+infection, recovery, and interventions. That model would be most suitable if it
+matches the same time intervals. This document looks at how we construct a
+discrete time model that has just a few moving parts. There is an attack rate
+from infectious mosquitoes, a recovery rate, and rates of treatment.
+
+We need this model to serve our computation, and our computation starts
+from our best data, the PfPR. Below is a diagram that shows how attack rate
+and PfPR are related in the absence of treatment. The three curves are three
+different ways of computing their relationship. The single jump model assumes
+that a person either gets infected (from the attack rate), or recovers, during
+the time window, but they can't recover and get infected again. The peek ahead
+is an approximation that emphasizes the ability to get reinfected. The master
+equation is the exact solution for the case where a person can recover and get reinfected.
+
+Following is a plot of an exact master equation for the system and
+several approximations. Two of those approximations have the happy
+behavior that they make it very, very easy to find the attack rate that
+would give a particular PfPR at equilibrium. Those two are the
+match with the worst error, the peekahead, and the match with the best
+error, the strang split.
+
+```{r plot_to_see_i_range2, echo = FALSE, fig.width = 5, fig.height = 4}
+plotirange <- function() {
+  r <- 14 / 200
+  q <- exp(-r)
+  a <- seq(0.01, 1, by = 0.002)
+  h <- -log(1 - a)
+  exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
+  peekahead <- a/(1 - (1 - a) * q)
+  sq <- sqrt(q)
+  strang <- (a * sq * (2 - sq)) / (1 + a * sq - q)
+  one_jump <- a / (1 + a - q)
+  plot(vector(mode = "numeric", length = 0),
+       xlim = c(0, 1), ylim = c(0, 1),
+       xlab = "attack rate", ylab = "PfPR",
+       main = "Comparison of Two week Outcomes",
+       cex = 0.5)
+  lines(a, peekahead, col = "green")
+  lines(a, strang, col = "blue")
+  lines(a, exact, col = "red")
+  lines(a, one_jump, col = "purple")
+  abline(h = 1, col = "blue")
+  legend(
+    .5, .8,
+    legend = c("peekahead", "exact master equation", "single jump", "strang"),
+    col = c("green", "red", "purple", "blue"),
+    lty = 1, cex = 0.7)
+}
+plotirange()
+```
+
+Let's assume, for the moment, that the curve labeled "exact master equation"
+is correct. We can see that, if we start with the best data, the PfPR,
+and derive the attack rate, these curves have large relative error
+for higher PfPR.
+
+```{r plot_to_see_i_range3, echo = FALSE, fig.width = 5, fig.height = 4}
+plotinverse <- function() {
+  r <- 14 / 200
+  q <- exp(-r)
+  a <- seq(0.01, 1, by = 0.002)
+  h <- -log(1 - a)
+  exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
+  peekahead <- a/(1 - (1 - a) * q)
+  sq <- sqrt(q)
+  strang <- (a * sq * (2 - sq)) / (1 + a * sq - q)
+  one_jump <- a / (1 + a - q)
+  picard <- ((h / (h + r)) - (1 - a / h)) / ((1 - q) / r - 1 + a / h)
+  
+  pr <- seq(0.3, 0.99, by = 0.01)
+  pr2 <- seq(0.3, max(one_jump), by = 0.01)
+  pr3 <- seq(0.3, 0.95, by = 0.01)
+  exactfun <- approxfun(a, exact)
+  exactpr <- function(y) {
+    uniroot(
+      function(x) {exactfun(x) - y},
+      interval = c(min(pr), max(pr)),
+      lower = min(a),
+      upper = max(a))$root
+  }
+  peekfun <- approxfun(a, peekahead)
+  peekpr <- function(y) {
+    uniroot(
+      function(x) {peekfun(x) - y},
+      interval = c(min(pr), max(pr)),
+      lower = min(a),
+      upper = max(a))$root
+  }
+  strangfun <- approxfun(a, strang)
+  strangpr <- function(y) {
+    uniroot(
+      function(x) {strangfun(x) - y},
+      interval = c(min(pr3), max(pr3)),
+      lower = min(a),
+      upper = max(a))$root
+  }
+  onefun <- approxfun(a, one_jump)
+  onepr <- function(y) {
+    uniroot(
+      function(x) {onefun(x) - y},
+      interval = c(min(pr2), max(pr2)),
+      lower = min(a),
+      upper = max(a))$root
+  }
+  picardfun <- approxfun(a, picard)
+  picardpr <- function(y) {
+    uniroot(
+      function(x) {picardfun(x) - y},
+      interval = c(min(pr), max(pr)),
+      lower = min(a),
+      upper = .88)$root
+  }
+  plot(
+    vector(mode = "numeric", length = 0),
+    xlim = c(0.3, 1), ylim = c(-.5, .5),
+    xlab = "PfPR", ylab = "Attack Rate Relative Error",
+    main = "Comparison of error in attack rate"
+    )
+  exactexact <- vapply(pr, exactpr, 1.0)
+  peekobs <- vapply(pr, peekpr, 1.0)
+  peekrelerr <- (peekobs - exactexact) / exactexact
+  lines(pr, peekrelerr, col = "green")
+  strangobs <- vapply(pr3, strangpr, 1.0)
+  strangrelerr <- (strangobs - exactexact[1:length(pr3)]) / exactexact[1:length(pr3)]
+  lines(pr3, strangrelerr, col = "blue")
+  oneexact <- vapply(pr2, exactpr, 1.0)
+  oneobs <- vapply(pr2, onepr, 1.0)
+  onerelerr <- (oneobs - oneexact) / oneexact
+  lines(pr2, onerelerr, col = "purple")
+  picardobs <- vapply(pr, picardpr, 1.0)
+  picardrelerr <- (picardobs - exactexact) / exactexact
+  lines(pr, picardrelerr, col = "orange")
+  legend(
+    .3, .4,
+    legend = c("peekahead", "single jump", "picard", "strang"),
+    col = c("green", "purple", "orange", "blue"),
+    lty = 1, cex = 0.7)
+  abline(h = 0.1, lty = 2)
+  abline(h = -0.1, lty = 2)
+}
+plotinverse()
+```
+
+The dotted lines are ten percent relative error. Both the single jump
+and peekahead models are within ten percent below a PfPR of 0.7.
+
+The errors above are for the simplest case. We will build models
+that include not only treatment but chemoprophylaxis and multiplicity of
+infection. We should know how to derive AR from PR for these more general
+cases. The more general cases will continue to be discrete-time models,
+so our goal here is to be able to get a good pr-to-ar for a larger discrete-time
+model.
+
+It would be excellent to write the time step so that we can
+solve directly for the attack rate. That means that some part of the matrix
+that does updates is linear in $A$.
+$$
+  x = (M_0 + AM_1) x_0
+$$
+If we have that structure, as we do with the peekahead, then we can
+"read out" the attack rate from the prevalence. This is a really nice property.
+The graph above argues that, while the peekahead is convenient, its errors
+can be large. We would like either a more precise approximation with the same
+attributes, or to show that we can solve the exact problem with the machinery
+on hand.
+
+To that end, we begin by describing a model with attack rate and recovery,
+but lacking treatment. We look at the usual models, solve it exactly, and
+evaluate the peek-ahead approximation. Following that, we look at a model
+just large enough to be a matrix problem. We then ask how to derive
+pr from AR given this matrix formulation.
+
+
+# Discrete-time Forced Susceptible-infected
+
+## Simple Forward Equation 
+
+The introduction showed that it's important to get the discrete time step
+correct in order to calculate PfPR from attack rate. Let's start with a
+well-understood discrete-time step model and see how it's used. We can
+show weaknesses and possible fixes before moving on to more detailed
+derivations.
+
+The first model has susceptible and infected compartments, where infection
+is driven by an external forcing. That external forcing is the attack rate of
+infectious bites from mosquitoes, which bite at a rate $h$ per day. People
+recover at a rate $r$ per day. Our discrete-time step is
+$$
+I=A(1-I_0) + QI_0
+$$
+where $A=1-e^{-ht}$ and $Q=e^{-rt}$, with $t$ the duration of the time step, which
+can be as much as fourteen days. A typical recovery time is 200 days, and attack rates
+can be much faster than recovery rates. We understand this model as a probability.
+$$
+P[I]=P[I|S]P[S_0] + P[I|I_0]P[I_0]
+$$
+The attack rate and recovery rate have the right form to be probabilities
+of exponentially-distributed processes.
+
+When we use that model for pr-to-ar, we solve for $A$ in one of two ways.
+The first is to assume the system is near equilibrium so that $I=I_0$. The second
+is to use PR values from modeled data, so that we know $I_0$ and $I$.
+The first problem with this model is its relative error for high PR.
+
+The second problem with this model is that it predicts a maximum attack rate
+near $I=0.93$. Some of the data has very high PfPR. There are practical ways to
+deal with this, such as clamping the input data, but how do we understand
+that the data might be higher than this model.
+
+The model, as given above, assumes that there is one jump during
+the interval, either a jump from $I\rightarrow S$ or $S\rightarrow I$.
+No matter how high the attack rate, newly-recovered individuals can never
+become infected over this time step. This puts an upper limit on the number of
+infected at the end of the time step.
+
+Dave proposed to modify this time step by explicitly including the
+$I\rightarrow S\rightarrow I$ transition. He added a term that
+looks like $P[I|S]P[S|I]P[I_0]$.
+$$
+I=A(1-I_0) + QI_0 + A(1-Q)I_0 = A(1-QI_0) + QI_0
+$$
+This term has some nice behaviors. It gives a sensible inverse from PR to AR,
+for PR=1. It keep the linearity of the problem in $A$, so that we can
+solve for $A$ directly.
+
+The relative error of the peekahead isn't much better than the
+original forced SI model we started with. I wonder how we could better serve
+the PR-to-AR calculation. To that end, could we write down
+an exact time step for a forced SI model that allows
+a transtition from $I\rightarrow S\rightarrow I$?
+
+
+
+
+
+## Approximations to the Master Equation
+### Master equation with additional transition
+The peekahead addresses an intrinsic problem with the forced SI model.
+As written, it doesn't allow $I\rightarrow S\rightarrow I$. There are two
+ways I can think to fix this. One is a model that has two comparments
+and two flow rates, from one to the other. Permit flows in either direction
+over the course of the model. It doesn't seem appropriate to suggest somebody
+would get infected and recover within two weeks, though, so let's write
+a model that, over the two weeks, allows $S\rightarrow I$, 
+$I\rightarrow S$, and $I\rightarrow S\rightarrow I$. That should be closest
+in spirit to the peekahead and nod to the non-exponential behavior of
+infection.
+
+Make a rate matrix there is a purely-absorbing
+$I$ called $\tilde{I}$. Any infections dump into $\tilde{I}$ but have no rate
+to leave $\tilde{I}$ over the time step. Our goal is to limit transitions, by hand,
+to only those we want to permit. This should simplify the solution, especially because
+this matrix is absorbing.
+$$
+x' = \left[\begin{array}{ccc}
+  -h & r & 0 \\
+  0 & -r & 0 \\
+  h & 0 & 0
+\end{array}\right]\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right]
+$$
+Note that the steady state for this master equation is $\tilde{I}=1$.
+How does this diagonalize? When $h\neq r$, it has eigenvalues $(-h, -r, 0)$. If they
+are equal there is a little care required. The eigenvectors are
+$$
+\left[\begin{array}{ccc}
+1 & r & 0 \\
+0 & (h-r) & 0 \\
+-1 & -h & 1
+\end{array}\right]
+$$
+Let's check that with some numbers to compare the eigenvectors from R with
+what I think they should be.
+```{r peek_around}
+peek_matrix <- function(h, r)
+  matrix(
+    c(-h,  r,  0,
+       0, -r,  0,
+       h,  0,  0
+      ),
+    nrow = 3,
+    byrow = TRUE
+    )
+peek_eigen <- function(h, r) {
+  peig <- matrix(
+    c(1, r, 0,
+      0, (h - r), 0,
+      -1, -h, 1),
+    nrow = 3,
+    byrow = TRUE
+  )
+  matrix(c(
+    peig[, 1] / sqrt(sum(peig[, 1] * peig[, 1])),
+    peig[, 2] / sqrt(sum(peig[, 2] * peig[, 2])),
+    peig[, 3] / sqrt(sum(peig[, 3] * peig[, 3]))
+  ), nrow = 3)
+  }
+peek_mat <- peek_matrix(1/25, 1/200)
+peek_mat
+```
+```{r peek_eigen}
+eigen(peek_mat)
+```
+```{r}
+peek_eigen(1/25, 1/200)
+```
+It looks like equations and numerics agree.
+That makes our solution have the form
+$$
+\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
+a_0 e^{-ht}\left[\begin{array}{c}1 \\ 0 \\ -1\end{array}\right] +
+a_1 e^{-rt}\left[\begin{array}{c}r \\ (h-r) \\ -h\end{array}\right] +
+a_2 \left[\begin{array}{c}0 \\ 0 \\ 1\end{array}\right]
+$$
+We find the constants by solving for the initial conditions $(1-I_0, I_0, 0)$.
+$$
+\left[\begin{array}{c}1-I_0 \\ I_0 \\ 0\end{array}\right] =
+\left[\begin{array}{ccc}1 & r & 0 \\ 0 & h-r & 0 \\ -1 & -h & 1\end{array}\right]
+\left[\begin{array}{c}a_0 \\ a_1 \\ a_2\end{array}\right]
+$$
+We can plug in to see that these are the constants.
+$$
+\left[\begin{array}{c}1-I_0 \\ I_0 \\ 0\end{array}\right] =
+\left[\begin{array}{ccc}1 & r & 0 \\ 0 & h-r & 0 \\ -1 & -h & 1\end{array}\right]
+\left[\begin{array}{c}(1-\frac{h}{h-r}I_0) \\ \frac{1}{h-r}I_0 \\ 1\end{array}\right]
+$$
+In fact, the whole, time-dependent probability is now of the same form.
+$$
+\left[\begin{array}{c}S \\ I \\ \tilde{I}\end{array}\right] =
+\left[\begin{array}{ccc}1 & r & 0 \\ 0 & h-r & 0 \\ -1 & -h & 1\end{array}\right]
+\left[\begin{array}{c}(1-\frac{h}{h-r}I_0)e^{-ht} \\ \frac{1}{h-r}I_0e^{-rt} \\ 1\end{array}\right]
+$$
+Add the both infected compartments together.
+$$
+P[I] = I + \tilde{I} = I_0e^{-rt} -(1-\frac{h}{h-r}I_0)e^{-ht} - \frac{h}{h-r}I_0e^{-rt} - 1
+$$
+Adding terms in $\exp(-rt)$.
+$$
+P[I] = -(1-\frac{h}{h-r}I_0)e^{-ht} +\left(\frac{h-r}{h-r}- \frac{h}{h-r}\right)I_0e^{-rt} + 1
+$$
+$$
+P[I] = -(1-\frac{h}{h-r}I_0)e^{-ht} -\frac{r}{h-r}I_0e^{-rt} + 1
+$$
+If we replace with attack rate and recovery, $\exp(-ht)=1-A$ and
+$\exp(-rt)=Q$.
+$$
+P[I] = -(1-\frac{h}{h-r}I_0)(1-A) -\frac{r}{h-r}I_0Q + 1
+$$
+We can find a comparison with the peekahead method by organizing this in terms
+of $S$ and $I$. We find $S$ by finding the 1 in $1-I$.
+Gather the $I_0$ terms to find $S$.
+\begin{eqnarray}
+P[I] & = & \frac{h}{h-r}I_0(1-A) -\frac{r}{h-r}I_0Q + 1+A-1\\
+& = & \frac{h}{h-r}I_0(1-A) -\frac{r}{h-r}I_0Q +AI_0 + A(1-I_0)\\
+& = & \left(\frac{h}{h-r}(1-A) -\frac{r}{h-r}Q +A\right)I_0 + AS_0\\
+& = & \left(h(1-A) -rQ +A(h-r)\right)\frac{I_0}{h-r} + AS_0\\
+& = & \left(h-Ah -rQ +Ah-Ar\right)\frac{I_0}{h-r} + AS_0\\
+& = & \frac{h-(Q+A)r}{h-r}I_0 + AS_0
+\end{eqnarray}
+
+Earlier, we checked our work by integrating a master equation. Here, we've solved
+the master equation exactly, so let's integrate this one.
+```{r master_equation_peek}
+cme_peek_trajectory <- function(I, h, r) {
+    params <- peek_matrix(h, r)
+    state <- c(S = 1 - I, I = I, T = 0)
+    cme <- function(t, state, parameters) {
+        list(as.numeric(parameters %*% state))
+    }
+    times <- seq(0, 14, by = 0.1)
+    deSolve::ode(y = state, times = times, func = cme, parms = params)
+}
+
+cme_peek_week <- function(I, h, r) {
+    trajectory <- cme_peek_trajectory(I, h, r)
+    unlist(trajectory[nrow(trajectory), c("S", "I", "T")])
+}
+
+plot_peek_cme <- function(I, h, r) {
+    trajectory <- cme_peek_trajectory(I, h, r)
+    tdf <- rbind(
+        data.frame(time = trajectory[, 1], value = trajectory[, 2], component = "S"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 3], component = "I"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 4], component = "I2")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) +
+      geom_line() + ylim(0, .6) +
+      ggtitle("Occupancy when we distinguish S->I transitions (numerical)")
+}
+plot_peek_cme(0.6, 1/20, 1/200)
+```
+That's fun. The green line is the slow recovery of the infected. The blue line
+are just the newly-infected.
+
+Great. let's look at the theoretical version. It should agree.
+```{r}
+cme_peek_theory <- function(I, h, r) {
+  peekm <- matrix(
+    c(1, r,     0,
+      0, h - r, 0,
+      -1, -h,    1),
+    byrow = TRUE,
+    nrow = 3
+  )
+  function(t) {
+    peekm %*% c(
+      S = (1 - I * h / (h - r)) * exp(-h * t),
+      I = (I / (h - r)) * exp(-r * t),
+      T = 1
+    )
+  }
+}
+
+plot_peek_theory <- function(I, h, r) {
+    times <- seq(0, 14, by = 0.1)
+    trajectory <- t(vapply(
+      times,
+      cme_peek_theory(0.6, 1/20, 1/200),
+      vector(mode = "numeric", length = 3)))
+    tdf <- rbind(
+        data.frame(time = times, value = trajectory[, 1], component = "S"),
+        data.frame(time = times, value = trajectory[, 2], component = "I"),
+        data.frame(time = times, value = trajectory[, 3], component = "I2")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) +
+      geom_line() + ylim(0, .6) +
+      ggtitle("Occupancy when we distinguish S->I transitions (theory)")
+}
+# Check that the initial conditions are correct.
+stopifnot(all(abs(cme_peek_theory(.6, 1/20, 1/200)(0) - c(.4, .6, 0)) < 1e-7))
+#times <- seq(0, 5, by = 1)
+#t(vapply(times, cme_peek_theory(0.6, 1/20, 1/200), vector(mode = "numeric", length = 3)))
+plot_peek_theory(.6, 1/20, 1/200)
+```
+
+The two I states are the same state, though, so let's add them together in the
+next plot. Note that, for this model, all individuals are infected in the end,
+for any value of attack rate above zero.
+```{r}
+plot_peek_cme_added <- function(I, h, r) {
+    trajectory <- cme_peek_trajectory(I, h, r)
+    tdf <- rbind(
+        data.frame(time = trajectory[, 1], value = trajectory[, 2], component = "S"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 3] + trajectory[, 4], component = "I")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line() + ylim(0, 1) +
+      ggtitle("Master equation forced SI allowing I-S-I transition (numerical)")
+}
+plot_peek_cme_added(0.6, 1/20, 1/200)
+```
+```{r plot_peek_short}
+cme_peek_short <- function(I, h, r) {
+  function(t) {
+    Q <- exp(-r * t)
+    A <- 1 - exp(-h * t)
+    I <- ((h - (Q + A) * r) / (h - r)) * I + A * (1 - I)
+    c(
+      S = 1 - I,
+      I = I
+    )
+  }
+}
+
+plot_peek_short <- function(I, h, r) {
+    times <- seq(0, 14, by = 0.1)
+    trajectory <- t(vapply(
+      times,
+      cme_peek_short(0.6, 1/20, 1/200),
+      vector(mode = "numeric", length = 2)))
+    tdf <- rbind(
+        data.frame(time = times, value = trajectory[, 1], component = "S"),
+        data.frame(time = times, value = trajectory[, 2], component = "I")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line() + ylim(0, 1) +
+            ggtitle("Master equation forced SI allowing I-S-I transition (theory)")
+}
+# Check that the initial conditions are correct.
+stopifnot(all(abs(cme_peek_short(.6, 1/20, 1/200)(0) - c(.4, .6)) < 1e-7))
+#times <- seq(0, 5, by = 1)
+#t(vapply(times, cme_peek_theory(0.6, 1/20, 1/200), vector(mode = "numeric", length = 3)))
+plot_peek_short(.6, 1/20, 1/200)
+```
+```{r actual_peek_ahead_plot}
+peek_si <- function(I, h, r) {
+  function(t) {
+    Q <- exp(-r * t)
+    A <- 1 - exp(-h * t)
+    # I <- A * (1 - Q * I) + Q * I
+    I <- A * (1 - 0.5 * I - 0.5 * Q * I) + Q * I
+    c(
+      S = 1 - I,
+      I = I
+    )
+  }
+}
+
+plot_peek_si <- function(I, h, r) {
+    times <- seq(0, 14, by = 0.1)
+    trajectory <- t(vapply(
+      times,
+      peek_si(0.6, 1/20, 1/200),
+      vector(mode = "numeric", length = 2)))
+    tdf <- rbind(
+        data.frame(time = times, value = trajectory[, 1], component = "S"),
+        data.frame(time = times, value = trajectory[, 2], component = "I")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line() + ylim(0, 1) +
+            ggtitle("Master equation forced SI (peekahead)")
+}
+# Check that the initial conditions are correct.
+stopifnot(all(abs(peek_si(.6, 1/20, 1/200)(0) - c(.4, .6)) < 1e-7))
+#times <- seq(0, 5, by = 1)
+#t(vapply(times, cme_peek_theory(0.6, 1/20, 1/200), vector(mode = "numeric", length = 3)))
+plot_peek_si(.6, 1/20, 1/200)
+```
+
+
+### Picard Iteration
+
+There's another technique that gives approximations to an integral without
+doing the whole integral from scratch. The Picard iteration starts with a
+solution to an integral and uses this to obtain the next order of the solution.
+It's commonly used to derive power series solutions to integrals. Here,
+it mimics multiple jumps in the Markov chain because we use the single-jump
+solution as the first iteration. I'd like to try this in order to 
+see if it's simpler or closer to the peekahead or will be more automatic to calculate
+when the model is larger.
+
+The method solves $y'=F(y,x)$ by assuming a $y_0(x)$ and solving
+$y_n = y(0) + \int_0^x F(y_{n-1}, x)dx$. We have an excellent $y_0$, because we have
+the single-jump solution, so let's integrate it to get $y_1$.
+$$
+\left[\begin{array}{c}S^{(1)} \\ I^{(1)}\end{array}\right] =
+\left[\begin{array}{c}1-I_0 \\ I_0\end{array}\right] + 
+\int_0^t \left[\begin{array}{cc}-h & r \\ h & -r\end{array}\right]
+\left[\begin{array}{c}S^{(0)} \\ I^{(0)}\end{array}\right]dt
+$$
+If we leave the matrix, this means
+$$
+I^{(1)} = I_0 + h\int_0^t(1-I^{(0)})dt - r\int_0^tI^{(0)}dt = I_0 + ht - (h+r)\int_0^tI^{(0)}dt
+$$
+In order to integrate our $I^{(0)}$, we note two integrals.
+$$
+\int_0^t Adt = \int_0^t(1-e^{-ht})dt = \left.t+\frac{1}{h}e^{-ht}\right|_0^t = t +\frac{1}{h}(e^{-ht}-1)=t-\frac{1}{h}A
+$$
+$$
+\int_0^tQdt = \int_0^te^{-rt}dt = \left.-\frac{1}{r}e^{-rt}\right|_0^t = \frac{1}{r}(1-e^{-rt}) = \frac{1}{r}(1-Q)
+$$
+As a result, our integral is
+$$
+\int_0^t\left(A(1-I_0) + QI_0\right)dt = (1-I_0)(t-\frac{1}{h}A) + I_0\frac{1}{r}(1-Q)
+$$
+We can write out the solution and ask our favorite question,
+what is PfPR as a function of attack rate?
+\begin{eqnarray}
+I^{(1)} &=& I_0 + ht-(h+r)\left((1-I_0)(t-\frac{1}{h}A) + I_0\frac{1}{r}(1-Q)\right) \\
+&=& I_0 + ht-(h+r)\left((t-\frac{1}{h}A)-I_0(t-\frac{1}{h}A) + I_0\frac{1}{r}(1-Q)\right) \\
+&=& I_0 + ht-(h+r)(t-\frac{1}{h}A)-(h+r)\left(-(t-\frac{1}{h}A) + \frac{1}{r}(1-Q)\right)I_0 \\
+&=& I_0 + ht-(h+r)(t-\frac{1}{h}A)-(h+r)\left(-(t-\frac{1}{h}A) + \frac{1}{r}(1-Q)\right)I_0 \\
+\frac{1}{h+r}(I^{(1)}-I_0) & = & \frac{h}{h+r}t-(t-\frac{1}{h}A)-\left(-(t-\frac{1}{h}A) + \frac{1}{r}(1-Q)\right)I_0 \\
+\frac{1}{ht+rt}(I^{(1)}-I_0) & = & \frac{ht}{ht+rt}-(1-\frac{1}{ht}A)-\left(-(1-\frac{1}{ht}A) + \frac{1}{rt}(1-Q)\right)I_0
+\end{eqnarray}
+Therefore, at equilibrium when $I=I_0$,
+$$
+I_0 = \left(\frac{ht}{ht+rt}-(1-\frac{1}{ht}A)\right)\left[-(1-\frac{1}{ht}A) + \frac{1}{rt}(1-Q)\right]^{-1}
+$$
+
+```{r picard_iteration}
+picard_equilibrium <- function(h, r, a, q) {
+  ((h / (h + r)) - (1 - a / h)) /
+    ((1 - q) / r - 1 + a / h)
+}
+```
+
+We could clean up the actual equation, too.
+\begin{eqnarray}
+I^{(1)} &=& I_0 + ht-(ht+rt)+\frac{ht+rt}{ht}A+(h+r)(t-\frac{1}{h}A)I_0 - (h+r)\frac{1}{r}(1-Q)I_0 \\
+&=& I_0 -rt+\frac{ht+rt}{ht}A+(ht+rt)I_0-\frac{ht+rt}{ht}AI_0 - \frac{ht+rt}{rt}(1-Q)I_0 \\
+&=& I_0 -rt+\frac{ht+rt}{ht}A(1-I_0)+(ht+rt)I_0 - \frac{ht+rt}{rt}(1-Q)I_0 \\
+&=& I_0 -rt+\frac{ht+rt}{ht}A(1-I_0)+(ht+rt)I_0 - \frac{ht+rt}{rt}I_0+\frac{ht+rt}{rt}QI_0 \\
+&=& I_0 -rt+(ht+rt)I_0 - \frac{ht+rt}{rt}I_0+\frac{ht+rt}{ht}A(1-I_0)+\frac{ht+rt}{rt}QI_0 \\
+&=& I_0 -rt+(ht+rt)I_0 - \frac{ht+rt}{rt}I_0+\frac{ht+rt}{ht}A(1-I_0)+\frac{ht+rt}{rt}QI_0 \\
+&=& \left(\frac{ht+rt}{ht}A-rt\right)(1-I_0)+\left(\frac{ht+rt}{rt}Q+ht-\frac{ht}{rt}\right)I_0
+\end{eqnarray}
+
+We won't be able to read out $A$ because both $A$ and $h$ are in the mix, but we could solve for it.
+Overall, this isn't any simpler than the exact solution.
+
+### Comparison of solutions
+
+The four equations we now have are a single-jump, operator splitting with the
+attack rate first ($p-$), operator splitting with the attack rate last ($p+$),
+a master equation, and the Picard (c) iteration. I've added the Strang-splitting
+methods ($s-$ and $s+$), derived in a later section. I HAVEN'T CHECKED the STRANG SPLITTING EQUATION YET.
+\begin{eqnarray}
+I_j &= &A(1-I_0) + QI_0\\
+I_{p-} &=&A(1-QI_0) + QI_0 \\
+I_{p+} & = & \alpha Q(1-I_0)+QI_0\\
+I_m &=& \frac{h-(Q+A)r}{h-r}I_0 + AS_0 \\
+I_c &=& \left(\frac{ht+rt}{ht}A-rt\right)(1-I_0)+\left(\frac{ht+rt}{rt}Q+ht-\frac{ht}{rt}\right)I_0 \\
+I_{s-} & = &  A Q^{1/2}(2-I_0-Q^{1/2})+QI_0 \\
+I_{s+} &=& A^{1/2}\left[(A^{1/2}-A)(1-I_0)+(Q-I_0)^2\right] + QI_0
+\end{eqnarray}
+The master equation does max out at $I=1$ for very large attack rates.
+
+Let's compare how each relates $A$ and $I$ at equilibrium, when $I=I_0$.
+
+```{r plot_to_see_i_range, echo = FALSE}
+plotirange <- function() {
+  r <- 14 / 200
+  q <- exp(-r)
+  a <- seq(0.01, 1, by = 0.002)
+  h <- -log(1 - a)
+  # modified_peek <- a / (1 + a - 0.5 * (1 + q))
+  modified_peek <- picard_equilibrium(h, r, a, q)
+  exact <- ifelse(is.finite(h), a / (1 + a - (h - (q + a) * r) / (h - r)), 1)
+  peekahead <- a/(1 - (1 - a) * q)
+  sq <- sqrt(q)
+  strang <- (a * sq * (2 - sq)) / (1 + a * sq - q)
+  one_jump <- a / (1 + a - q)
+  plot(vector(mode = "numeric", length = 0),
+       xlim = c(0, 1), ylim = c(0, 1),
+       xlab = "attack rate", ylab = "PfPR",
+       main = "Comparison of Two week Outcomes")
+  lines(a, peekahead, col = "green")
+  lines(a, strang, col = "blue")
+  lines(a, modified_peek, col = "orange")
+  lines(a, exact, col = "red")
+  lines(a, one_jump, col = "purple")
+  abline(h = 1, col = "blue")
+  legend(
+    .6, .8,
+    legend = c("peekahead", "picard", "exact master equation", "single jump", "strang"),
+    col = c("green", "orange", "red", "purple", "blue"),
+    lty = 1)
+}
+plotirange()
+```
+
+Notice that, for large PR, a small change in PR is a large change in attack rate.
+That means a small error in PR is a large error in attack rate.
+
+The next step is to use any of a number of ways to solve the master equation
+for the attack rate. We could linearize around a previous attack rate. We could
+solve for the linear portion and iterate the equation until it converges. We could
+optimize it.
+
+How we solve for the attack rate depends on which method works well
+in the context of this data. We can understand that better if we expand
+the model so that it is, at least, a small matrix.
+
+## Looking for Peekahead
+
+Let's figure out how to help ourselves solve for the attack rate.
+Now that we are familiar with the master equation, can we construct
+a discrete time step that's easy to solve? The general form is a matrix
+exponential.
+$$
+x = e^{At}x_0
+$$
+We could either rewrite this exponential so that the attack rate is separate
+or pull out terms in a solution to the matrix exponential.
+
+
+### Operator Splitting
+For instance, we could separate the attack rate in the exponential by
+writing it as the sum of a part that has $h$ and a part that doesn't.
+The problem is that these two parts won't usually commute, and the exponential
+is simple to calculate only if they commute. The Baker-Campbell-Hausdorff lemma
+tells us that the error is $O(h)$ if we do a simple split.
+$$
+e^{A(h) + A(\bar{h})} \approx e^{A(h)}e^{A(\bar{h})} + e^{A(h)A(\bar{h})-A(\bar{h})A(h)}+\cdots
+$$
+The parts of the transition matrix with and without the force of infection don't commute,
+so splitting this operator is an approximation. It is, however, exactly the approximation
+that leads to the first version of the peekahead that we used.
+Here, we will use $\alpha=1-e^{-ht}$.
+$$
+e^{At}=e^{A(h)t}e^{A(\bar{h})t} = \left[\begin{array}{cc}
+  1-\alpha & 0  \\
+  \alpha & 1 
+  \end{array}\right]\left[\begin{array}{cc}1 & 1-Q \\ 0 & Q\end{array}\right]
+  =\left[\begin{array}{cc}1-\alpha & (1-\alpha)(1-Q) \\ \alpha & \alpha(1-Q)+Q\end{array}\right]
+$$
+If we take the infectious component, then that becomes Dave's original peekahead.
+$$
+I = \alpha(1-I_0)+\alpha(1-Q)I_0+QI_0=\alpha(1-QI_0)+QI_0
+$$
+What if we do the split in the opposite direction? That should give us a different
+approximation.
+$$
+e^{At}=e^{A(\bar{h})t}e^{A(h)t} =
+\left[\begin{array}{cc}1 & 1-Q \\ 0 & Q\end{array}\right]
+\left[\begin{array}{cc}
+  1-\alpha & 0  \\
+  \alpha & 1 
+  \end{array}\right]
+  =\left[\begin{array}{cc}1-\alpha+(1-Q)\alpha & (1-Q) \\ Q\alpha & Q\end{array}\right]
+$$
+That leads to an equation for $I$ of the form.
+$$
+I = \alpha Q(1-I_0)+QI_0
+$$
+
+Both of those derivations have error that's $O(h)$. The usual method to fix that is to use
+Strang splitting, which means splitting the transition matrix into three pieces
+[@celledoni2001methods].
+$$
+e^{A(h)t + A(\bar{h})t} \approx e^{A(h)t/2}e^{A(\bar{h})}e^{A(h)t/2}
+$$
+For our problem, the matrix for $A(h)$ is that part of the transition matrix
+that has the attack rate in it. It's one column with two entries, and $A(\bar{h})$ is the rest of
+the transition matrix.
+
+If we take the susceptible-infected-treated example, we could split in two different ways.
+Either put the attack rate in the middle or put the attack rate on the outsides.
+Putting the attack rate in the middle would make the problem linear in attack rate.
+$$
+  e^{At} = e^{A(\bar{h})t/2}e^{A(h)}e^{A(\bar{h})t/2}
+$$
+This comes to
+$$
+\left[\begin{array}{cc}1 & 1-Q^{1/2} \\ 0 & Q^{1/2}\end{array}\right]
+\left[\begin{array}{cc}
+  1-\alpha & 0  \\
+  \alpha & 1 
+  \end{array}\right]
+\left[\begin{array}{cc}1 & 1-Q^{1/2} \\ 0 & Q^{1/2}\end{array}\right]
+$$
+This comes to
+$$
+\left[\begin{array}{cc}
+  (1-\alpha)+\alpha(1-Q^{1/2}) & (1-\alpha)(1-Q^{1/2})+\alpha(1-Q^{1/2})^2+Q^{1/2}(1-Q^{1/2})  \\
+  \alpha Q^{1/2} & \alpha Q^{1/2}(1-Q^{1/2})+Q 
+  \end{array}\right]
+$$
+so that the equation for $I$ is
+$$
+I = \alpha Q^{1/2}(2-I_0-Q^{1/2})+QI_0
+$$
+so that we can solve for the attack rate by solving for $\alpha$.
+$$
+\alpha=\frac{I-QI_0}{Q^{1/2}(2-I_0-Q^{1/2})}
+$$
+If you put the attack rate on the outside, you'd want to define $s = e^{-ht/2}$.
+$$
+  e^{A(h)t/2} = \left[\begin{array}{ccc}
+  e^{-ht/2} & 0 & 0 \\
+  1-e^{-ht/2} & 1 & 0 \\
+  0 & 0 & 1
+  \end{array}\right] =
+  \left[\begin{array}{ccc}
+  s & 0 & 0 \\
+  1-s & 1 & 0 \\
+  0 & 0 & 1
+  \end{array}\right]
+$$
+If the attack rate is $\alpha = 1-e^{-ht}$, then $s=(1-\alpha)^{1/2}$.
+It's a simple transformation.
+The resulting update for the state will be polynomial in the square root of the
+attack rate. That should be much easier to optimize than the general matrix.
+The middle part, $e^{A(\bar{h})t}$, is a little complicated, but so is the actual master equation,
+so that's to be expected. The key is that it doesn't include $h$ or $\alpha$.
+
+If we do this just for the little S-I matrix, we get
+$$
+  e^{A(\bar{h})} = \exp\left[\begin{array}{cc}0 & r \\ 0 & -r\end{array}\right]
+  = \left[\begin{array}{cc}1 & 1-e^{-r} \\ 0 & e^{-r}\end{array}\right]
+$$
+As above, we can say $Q=e^{-r}$. Then the whole solution is
+$$
+x = \left[\begin{array}{cc}
+  s & 0  \\
+  1-s & 1 
+  \end{array}\right]
+  \left[\begin{array}{cc}1 & 1-Q \\ 0 & Q\end{array}\right]
+  \left[\begin{array}{cc}
+  s & 0  \\
+  1-s & 1 
+  \end{array}\right]x_0 =
+  \left[\begin{array}{cc}
+  s^2(1-s)(1-Q) & s(1-Q)  \\
+  s(1-s)^2+Q(1-s) & (1-s)(1-Q)+Q 
+  \end{array}\right]x_0
+$$
+For just the infected state, that's
+$$
+I = \left(s(1-s)^2+Q(1-s)\right)(1-I_0) + \left((1-s)(1-Q)+Q\right)I
+$$
+If my math is correct (not likely), then this comes out to a third-order equation in $(1-s)$,
+$$
+  (1-s)\left[(1-s)(1-I_0)-(1-s)^2(1-I_0)+(Q-I_0)^2\right] + (QI_0-I) = 0
+$$
+I HAVEN'T CHECKED the STRANG SPLITTING EQUATION YET.
+
+
+
+### Polynomial methods for solving the matrix exponential
+
+We have been solving for the discrete time step using integration of
+the matrix differential equation, but we could, instead, write the solution 
+as a matrix exponential and solve that. For instance, Newton interpolation
+is a way to solve a matrix exponential such that you can pull out terms [@moler2003nineteen].
+$$
+  e^{tA} = e^{\lambda_1t}I+\sum_{j=2}^n[\lambda_1,\dots,\lambda_j]\prod_{k=1}^{j-1}(A-\lambda_kI)
+$$
+Here, the symbol with the dots is a divided diference. It's defined recursively by
+\begin{eqnarray}
+[\lambda_1,\lambda_2] & = & (e^{\lambda_1t}-e^{\lambda_2t})/(\lambda_1-\lambda_2) \\
+{[\lambda_1,\dots,\lambda_{k+1}]} & = & \frac{[\lambda_1,\dots,\lambda_k]-[\lambda_2,\dots,\lambda_{k+1}]}{\lambda_1-\lambda_{k+1}}
+\end{eqnarray}
+This equation needs adjustment if eigenvalues are the same, or nearly the same,
+but you see that it's written in terms of exponentials in the eigenvalues which, in
+this case includes the attack rate. It will also be a function of the log of the attack rate,
+but maybe we can use this to derive an analytic form of an iterative equation for the
+attack rate.
+
+This polynomial method doesn't work if eigenvalues are equal. You have to fuss with
+it. It's helpful for analytical 3x3 matrices, though.
+
+### Convergence using matrix derivative
+
+When we say we want a peekahead we mean that we want a fast way to invert
+a time step that's a matrix. You can rarely invert a real system analytically,
+but you can make the inversion much faster if you can compute the derivative of
+the function. Let's do that here, because it will make optimization much faster.
+
+Suppose we have a transition matrix. How can we get its derivative with
+respect to the attack rate part? Our time step is
+$$
+x(t) = e^{A(h)t}x_0
+$$
+You can also see it as $x(h)$ instead of $x(t)$.
+We want to know what the attack rate $h$ is. We could make the whole problem linear,
+but it has been trouble to get the problem, linearized in $e^{-ht}$, to converge. Another
+way to make this easier is to find the derivative of the problem with respect to
+$h$. Then we can use an Newton step for fast convergence.
+$$
+x(h) \approx x(h_0) + \left.\nabla_h x\right|_{h_0}(h-h_0)
+$$
+Solve that to get the iteration. While $x$ is a vector, we're trying to match
+the component for *Pf*PR, so we project it out using a projection matrix $P$.
+$$
+h = h_0 + \frac{P(x(h)-x(h_0))}{P\nabla_h x}
+$$
+That projection could cause problems for stability. We could be better off reducing
+a 2-norm. It's minimization of the difference between two vectors with respect to a scalar.
+$$
+  \min_h ||  x(h_0) + \nabla_h x(h-h_0) - x(h) ||_2
+$$
+Think of it as two fixed vectors, $v_0$ and $v_1$, and you're minimizing $(v_0-hv_1)^t(v_0-hv_1)$.
+
+How do we find the derivative with respect to $h$, given that we are going to construct these
+matrices in automated ways? We have to see the derivative with respect
+to $h$ as a matrix-directional derivative. Use notation from [@najfeld1995derivatives].
+$$
+  D_V(t,A) = \lim_{h\rightarrow 0}\frac{1}{h}\left(e^{t(A+hV)}-e^{tA}\right)
+$$
+The change in x uses this derivative.
+$$
+\nabla_{h}x = D_V(t,A) x_0
+$$
+That paper gives us a nice way to get the directional derivative. If we construct
+a larger matrix with a particular block form and exponentiate it, then a sub-block
+of the result is the derivative we want. This comes from a nice result about
+functions of block-triangular matrices [@parlett1976recurrence].
+Construct the larger matrix, including our attack rate in the upper-right.
+$$
+B = \left[\begin{array}{cc}A & V \\ 0 & A\end{array}\right]
+$$
+Then exponentiate it.
+$$
+e^B = \left[\begin{array}{cc}e^A & D_V(t, A) \\ 0 & e^A\end{array}\right]
+$$
+
+Now demonstrate that we can calculate this.
+Take our matrix from the susceptible-infectious-treatment example.
+$$
+A = \left[\begin{array}{ccc}-h & r & u \\ h & -r-\tau & 0 \\ 0 & \tau & -u\end{array}\right]
+$$
+That same matrix as code can be split into two parts.
+```{r derivatives}
+A <- matrix(c(
+  -.4, .1, .2,
+  .4, -.15, 0,
+  0, .15, -.2), nrow = 3, byrow = TRUE
+  )
+vscale <- 0.1  # Scale to make matrix exponential more efficient.
+V <- vscale * matrix(c(
+  -1, 0, 0,
+  1, 0, 0,
+  0, 0, 0), nrow = 3, byrow = TRUE
+  )
+A_minus_V <- matrix(c(
+  0, .1, .2,
+  0, -.15, 0,
+  0, .05, -.2), nrow = 3, byrow = TRUE
+  )
+```
+I can calculate the derivative with respect to the $h$ portion of the matrix.
+The matrix package, in R, has a numerical matrix exponential that does the right thing
+in most cases. It combines splitting with rescaling and raising the matrix to a power.
+We can use that to numerically calculate the derivative from the transition matrix.
+```{r calc_derivative}
+doubled <- rbind(cbind(A, V), cbind(matrix(0, 3, 3), A))
+exp_doubled <- expm::expm(doubled)
+directional <- exp_doubled[1:3, 4:6] / vscale
+directional
+```
+
+
+# An S--I--T Model for Attack Rate
+
+## The Model
+We use a model that includes treatment because it forces us to be more
+honest about using matrices. It's so easy to drop the susceptible state
+and work with real numbers.
+There is a rate of treatment, $\tau$, and
+a rate for leaving the treated state, back to susceptible, $u$.
+
+As a graph, we see three states and four transitions.
+```{r model_graph}
+model_graph <- graph_from_literal(
+    S -+ infect -+ I, I -+ recover -+ S, I -+ treat -+ T, T -+ wane -+ S
+)
+plot(model_graph)
+```
+
+
+## Treatment, forcing, with cycles
+
+The first version of a model has three states, susceptible, infected,
+and treated. Recovery from infected to susceptible has a known rate near
+$r=1/200 per day$. Force of infection is $h$, which is usually faster than
+the recovery rate. Treatment is $\tau$, and treatment wanes with rate $u$.
+The differential equations that form the master equation are
+$$
+  \frac{d}{dt}  \left[\begin{array}{c}
+  S\\
+  I \\
+  T
+  \end{array}\right]
+ = \left[\begin{array}{ccc}
+  -h & r & u\\
+  h & -r-\tau & 0 \\
+  0 & \tau & -u
+  \end{array}\right]
+  \left[\begin{array}{c}
+  S\\
+  I \\
+  T
+  \end{array}\right]
+$$
+The master equation, as written, is a matrix differential equation. Its solution will
+be a matrix exponential. Both of these terms are on Wikipedia, for reference.
+
+Let's look at the master equation, so that we can compare it later.
+First try integrating the equation as it stands.
+```{r master_equation_integration}
+A_matrix <- function(h, sit_params) with(
+  sit_params,
+  matrix(
+    c(-h       , r,  u,
+       h, -r - tau,  0,
+       0,      tau, -u),
+    nrow = 3,
+    byrow = TRUE
+    )
+  )
+
+cme_trajectory <- function(I, C, h, sit_params) {
+    params <- A_matrix(h, sit_params)
+    state <- c(S = 1 - I - C, I = I, T = C)
+    cme <- function(t, state, parameters) {
+        list(as.numeric(parameters %*% state))
+    }
+    times <- seq(0, 14, by = 0.1)
+    deSolve::ode(y = state, times = times, func = cme, parms = params)
+}
+
+cme_week <- function(I, C, h, sit_params) {
+    trajectory <- cme_trajectory(I, C, h, sit_params)
+    unlist(trajectory[nrow(trajectory), c("S", "I", "T")])
+}
+
+plot_master_equation <- function(I, C, h, sit_params) {
+    trajectory <- cme_trajectory(I, C, h, sit_params)
+    tdf <- rbind(
+        data.frame(time = trajectory[, 1], value = trajectory[, 2], component = "S"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 3], component = "I"),
+        data.frame(time = trajectory[, 1], value = trajectory[, 4], component = "T")
+    )
+    ggplot(tdf, aes(x = time, y = value, color = component)) + geom_line() + ylim(0, 1)
+}
+plot_sit_params <- list(r = 1/200, tau = 1/90, u = 1/20)
+plot_master_equation(0.6, 0.1, 1/20, plot_sit_params)
+```
+
+We could try to write the solution to the master equation as $\exp(At)x_0$, but this
+matrix is singular, so we'd need some more complicated methods. The matrix is singular
+because the system can be stated without using $S$. You could replace $S=1-I-T$, so
+it's rank deficient.
+```{r an_a_matrix}
+A <- A_matrix(1/20, plot_sit_params)
+eigen(A)
+```
+When we see, for an SIR system, that $S$ is redundant, we rewrite it in terms of
+$I$ and $R$. Can we formalize that process so that we can do a similar rewrite
+for larger matrices? The rewrite will also pull out the attack rate.
+Let's work through it for the SIT system here.
+
+We are going to assume that $S = 1-I-T$. Start by dropping the first
+equation because it's redundant. We still have the full state space though.
+$$
+\frac{d}{dt}\left[\begin{array}{c}1-I-T \\ I \\ T\end{array}\right] =
+  \left[\begin{array}{ccc}
+  h & -r-\tau & 0 \\
+  0 & \tau & -u
+  \end{array}\right]
+  \left[\begin{array}{c}1-I-T \\ I \\ T\end{array}\right]
+$$
+This is equivalent to
+$$
+\frac{d}{dt}\left[\begin{array}{c}I \\ T\end{array}\right] =
+\left[\begin{array}{cc}
+  -r-\tau-h & -h \\
+  \tau & -u
+  \end{array}\right]
+  \left[\begin{array}{c}I \\ T\end{array}\right] +
+  \left[\begin{array}{c}h \\ 0\end{array}\right]
+$$
+You can also see it as
+$$
+\frac{d}{dt}\left[\begin{array}{c}I \\ T\end{array}\right] =
+\left(\left[\begin{array}{cc}
+  -r-\tau & 0 \\
+  \tau & -u
+  \end{array}\right] -
+\left[\begin{array}{cc}
+  h & h \\
+  0 & 0
+  \end{array}\right]
+  \right)
+  \left[\begin{array}{c}I \\ T\end{array}\right] +
+  \left[\begin{array}{c}h \\ 0\end{array}\right]
+$$
+There is a definite structure to the attack rate in this generator matrix. We
+can think of it as $b=(h, 0)^T$ and $(M-[b\:b])x + b$.
+
+## Simple Forward Equation
+
+For the forced SI model, we started with a model that had full probabilities,
+so it has $A=1-\exp(-ht)$ and $B=\exp(-rt)$. We showed that you can derive
+this kind of time step from the master equation by transforming it to allow
+only a single transition. Then the rates become simple to integrate.
+This section points out a simpler time step.
+
+We can create an algorithm to take a discrete time step by assuming
+the time step is short and that $\mbox{rate}x\mbox{time}$ is a suffient
+approximation to the probability of changing states.
+\begin{eqnarray}
+  \frac{dx}{dt} & = & A x_0 \\
+  x - x_0 & \approx & \Delta t A x_0 \\
+  x & \approx & (1 + \Delta t A) x_0
+\end{eqnarray}
+Remember, too, that the Euler approximation used above isn't the only way to
+calculate a derivative. There are four-point approximations that may be a nice
+way to smooth the input data.
+
+If we fill in the values from above, and we rescale all the rates
+by $h =h\Delta t$, $\tau=\tau\Delta t$, $r=r\Delta t$,
+$$
+x =
+\left[\begin{array}{ccc}
+  1-h & r & u\\
+  h & 1-r-\tau & 0 \\
+  0 & \tau & 1-u
+  \end{array}\right]x_0
+$$
+We can also reduce this by eliminating the $S$ state. Take $x=(I,T)$.
+$$
+x =
+\left[\begin{array}{cc}
+  1-r-\tau-h & 0 \\
+  \tau & 1-u-h
+  \end{array}\right]x_0 + \left[\begin{array}{c}h \\ 0\end{array}\right]
+$$
+This should match the forced SI if we set $\tau=0$, so
+$$
+  I = (1-r-h)I_0 + h = h(1-I)+(1-r)I_0
+$$
+We complete the equivalence by replacing $A=1-e^{-h}\approx h$ and $Q=e^{-r}\approx 1-r$ to get
+$$
+I=A(1-I_0) + QI_0
+$$
+Most people find the discrete time step this way, by doing the simplest approximation
+to the master equation, looking at rates, and guessing their way up
+to probabilities.
+
+
+## Single Step Master Equation for S--I--T
+I said that the discrete-time step is an approximation to the master equation
+for small times. That's not quite correct, as you can see by the need above to
+approximate $h \approx \exp(h) -1$. More formally, you can derive
+the single time step probability by expanding the state space to allow only
+one jump per time. That is, take $(S,I,T)$ and create a state space
+$(S,I,T,S',I',T')$ where the primed compartments are purely absorbing.
+That's a larger matrix, but it has nicer eigenvalue properties.
+```{r big_six}
+big_matrix <- function(h, sit_params) with(
+  sit_params,
+  matrix(
+    c(-h,        0,  0, 0, 0, 0,
+       0, -r - tau,  0, 0, 0, 0,
+       0,        0, -u, 0, 0, 0,
+       0,        r,  u, 0, 0, 0,
+       h,        0,  0, 0, 0, 0,
+       0,      tau,  0, 0, 0, 0
+      ),
+    nrow = 6,
+    byrow = TRUE
+    )
+  )
+eigen(big_matrix(1/40, plot_sit_params))
+```
+When we want to allow the $I\rightarrow S\rightarrow I$ transition, that means
+we don't create an $S'$, so eliminate that column and row.
+```{r big_around}
+around_matrix <- function(h, sit_params) with(
+  sit_params,
+  matrix(
+    c(-h,        r,  u, 0, 0,
+       0, -r - tau,  0, 0, 0,
+       0,        0, -u, 0, 0,
+       h,        0,  0, 0, 0,
+       0,      tau,  0, 0, 0
+      ),
+    nrow = 5,
+    byrow = TRUE
+    )
+  )
+around_mat <- around_matrix(1/40, plot_sit_params)
+around_mat
+```
+
+```{r around_eigen}
+stopifnot(det(around_mat) == 0)
+around_eigen <- eigen(around_mat)
+around_eigen
+```
+The key to solving this equation is to diagonalize the matrix,
+so that we can exponentiate.
+```{r exponentiate}
+P <- around_eigen$vectors
+P %*% diag(around_eigen$values) %*% solve(P)
+```
+
+```{r inverse_p}
+solve(P)
+```
+
+But I should do this for the peekahead. 
+
+
+## A multi-step discrete-time equation
+
+One approach is to say that a ten-day duration is ten one-day steps, so that it's possible
+to recover and get sick again on different days. This would allow us to
+use the simplest form of the discrete time step, even an approximation directly from
+the master equation. This section will state the problem as a multi-step
+update and then show how to solve for the attack rate given that structure.
+This method will work for larger compartmental systems, which have larger matrices.
+
+Let's work with the S-I-T model where we've removed the susceptible state.
+As a reminder that's this equation, with the rates rescaled by the time step.
+The one on the diagonal is because we're looking at updating $x$ from $x_0$.
+$$
+\left[\begin{array}{c}I \\ T\end{array}\right] =
+\left(\left[\begin{array}{cc}
+  1-r-\tau & 0 \\
+  \tau & 1-u
+  \end{array}\right] -
+\left[\begin{array}{cc}
+  h & h \\
+  0 & 0
+  \end{array}\right]
+  \right)
+  \left[\begin{array}{c}I \\ T\end{array}\right] +
+  \left[\begin{array}{c}h \\ 0\end{array}\right]
+$$
+Here, the time step would be
+$$
+  x_1 = (1 + M-B)x_0 + b
+$$
+where we assume $B, M, b$ are rescaled by the time step. If we iterate this
+to get $x_1$, then $x_2$, then $x_3$, the result is
+$$
+x_3 = b + (1+M-B)b + (1+M-B)^2b + (1+M-B)^3x_0
+$$
+As a series, it's
+$$
+x_n = \sum_{i=0}^{i=n-1}(1+M-B)^ib + (1+M-B)^nx_0
+$$
+
+While a single time step was linear in attack rate, two or more time steps
+aren't linear in the attack rate.
+We can reduce express the series as a fraction if we think that's handy.
+$$
+x_n = \frac{1-(1+M-B)^n}{1-(1+M-B)}b + (1+M-B)^nx_0
+$$
+It's probably more useful to write that sum with Horner's method. Start with
+$\mbox{Horner}(0)=1$, and recursively define
+$$
+\sum_{i=0}^{i=n-1}(1+M-B)^i = \mbox{Horner}(n) = \mbox{Horner}(n-1) (1+M-B) + 1
+$$
+
+I'll bet we could pick a value for the matrix $B=[b,b]$, then solve for the vector $b$ and iterate to get
+a solution. We would shift the equation to have a left-hand side (LHS) and right-hand side (RHS)
+like this.
+$$
+x_n- (1+M-B)^nx_0 = \frac{1-(1+M-B)^n}{1-(1+M-B)}b
+$$
+Then the (1,1) component of the matrix would give us a value for $h$.
+$$
+x_n- (1+M-B)^nx_0 = \frac{1-(1+M-B)^n}{1-(1+M-B)}\left[\begin{array}{c}h \\ 0\end{array}\right]
+$$
+
+
+Let's define a problem. Use the master equation to determine a change over a week
+from an initial $x_0$ to a final $x_1$. Then use our technique to guess $h$.
+```{r define_problem}
+actual_h <- 1 / 20
+known_params <- list(r = 1 / 200, tau = 1 / 120, u = 1 / 20)
+x0 <- c(0.3, 0.6, 0.1)
+x1 <- cme_week(x0[2], x0[3], actual_h, known_params)
+rbind(x0, x1)
+```
+
+```{r construct_and_test}
+# the matrix 1 - M - B
+one_m_b <- function(h, dt_params) with(dt_params, {
+  matrix(
+    c(1 - r - tau - h, -h,
+      tau, 1 - u),
+    nrow = 2,
+    byrow = TRUE
+    )
+})
+
+#' The coefficient of b on the right-hand side.
+#' This is wildly faster than simple version because it uses Horner method.
+coeff_of_b <- function(mb, step_cnt) {
+  one <- diag(1, dim(mb)[1], dim(mb)[2])
+  total <- one
+  # The 14 is one week.
+  for (i in 2:step_cnt) {
+    total <- total %*% mb + one
+  }
+  total
+}
+
+#' Coefficient of b on the right-hand side using obviously-correct equation.
+coeff_of_b_slow <- function(mb, step_cnt) {
+  total <- diag(1, dim(mb)[1], dim(mb)[2])
+  for (i in 1:(step_cnt - 1)) {
+    total <- total + matpow::matpow(mb, i)$prod1
+  }
+  total
+}
+
+#' Compare Horner method and obviously-correct method.
+test_coeff <- function() {
+  known_params <- list(r = 1 / 200, tau = 1 / 120, u = 1 / 20)
+  mb <- one_m_b(1/20, known_params)
+  cba <- coeff_of_b(mb, 5)
+  cbb <- coeff_of_b_slow(mb, 5)
+  all(abs(as.array(cba) - as.array(cbb)) < 1e-7)
+}
+stopifnot(test_coeff())
+
+#' Compare the continuous-time integration of the SIT master equation
+#' with iterative application of the small-time matrix version of SIT.
+test_whole_equation_forward <- function(step_cnt = 14) {
+  actual_h <- 1 / 20
+  known_params <- list(r = 1 / 200, tau = 1 / 120, u = 1 / 20)
+  # State is I and T, not S.
+  x0 <- matrix(c(0.6, 0.1), ncol = 1)
+  # Pull I and T (2 and 3) out of the final values.
+  x1 <- matrix(cme_week(x0[1], x0[2], actual_h, known_params)[2:3], ncol = 1)
+
+  dt <- 14 / step_cnt
+  dt_params <- as.list(unlist(known_params) * dt)
+  mb <- one_m_b(actual_h * dt, dt_params)
+  cob <- coeff_of_b(mb, step_cnt)
+  b <- matrix(c(actual_h * dt, 0), ncol = 1)
+  x1p <- cob %*% b + matpow::matpow(mb, step_cnt)$prod1 %*% x0
+  list(x1, x1p)
+}
+two_answers <- test_whole_equation_forward(step_cnt = 50)
+stopifnot(all(abs(two_answers[[2]] - two_answers[[1]]) < 1e-3))
+```
+
+```{r iterate_to_solution}
+iterative_attack_rate <- function(x0, x1, h_initial, sit_params, dt_days, eps = 0.01, maxiter = 50) {
+  x0_column <- matrix(x0[(length(x0) - 1):length(x0)], ncol = 1)
+  x1_column <- matrix(x1[(length(x1) - 1):length(x1)], ncol = 1)
+  step_cnt <- round(14 / dt_days)
+  dt_days <- 14 / step_cnt  # In case dt doesn't divide evenly.
+  dt_params <- as.list(unlist(sit_params) * dt_days)
+  h_guess <- h_initial * dt_days
+  for (iterative_refinement in 1:maxiter) {
+    mb <- one_m_b(h_guess, dt_params)
+    
+    lhs <- x1_column - matpow::matpow(mb, step_cnt)$prod1 %*% x0_column
+    rhs <- coeff_of_b(mb, step_cnt)
+    # cat(paste("lhs", str(lhs), "\n"))
+    # cat(paste("rhs", str(rhs), "\n"))
+    h_next <- lhs[1, 1] / rhs[1, 1]
+    cat(paste("h", h_guess, h_next, "\n"))
+    if (abs(h_next - h_guess) < eps * h_guess) break
+    h_guess <- h_next
+  }
+  list(ans = h_guess / dt_days, iterations = iterative_refinement)
+}
+
+relative_error <- function(x, y) {abs((x - y) / y)}
+
+res <- iterative_attack_rate(x0, x1, 1 / 40, known_params, 0.01, eps = 0.001)
+data.frame(
+  ar_days = 1/res$ans,
+  relerr = relative_error(res$ans, actual_h),
+  iterations = res$iterations)
+```
+It finds the correct value.
+
+Out of curiosity, if we used the steady-state peekahead version, what
+is the equilibrium value for these prevalences?
+
+
+## A continuous deterministic approach
+
+We know that the master equation has a solution of the form
+$x = \exp(At) x_0$. We could start there in order to linearize around
+some attack rate. We use the structure of the operator $A$ and break out
+the attack rate, itself.
+
+We determined above that our matrix differential equation for the master equation
+is
+$$
+\frac{dx}{dt} = \left([b~b] + M\right)x + b.
+$$
+I've been naming that matrix $B=[b~b]$. A matrix of this form has a steady
+state $\hat{x}=-A^{-1}b$. You can rewrite it as
+$$
+\frac{dx}{dt} = \left(B + M\right)(x - \hat{x}).
+$$
+The equation for the perturbation is then
+$$
+\frac{d\tilde{x}}{dt} = \left(B + M\right)\tilde{x}.
+$$
+As a word of caution, we may not be able to rewrite the equation this way because
+we don't yet know the value for the attack rate. In that case, we would treat the $b$
+term as a separate condition for the integral. 
+Meanwhile, if we write the solution to the equation above as an exponential,
+$$
+x = e^{(B + M)t}x_0
+$$
+We can't separate the exponential into two because $B$ and $M$ don't commute.
+We could take a Taylor series in $b$ around some given value. That might be an improvement
+over assuming it's linear around $b=0$.
+$$
+  x \approx \left(e^{(B_0 + M)t} + e^{(B_0 + M)t}\tilde{B}\right)x_0
+$$
+
+## A continuous stochastic approach
+
+This approach treats the system as a continuous-time stochastic
+system and asks the probability for all paths. It has the advantage
+that we can specify, exactly, that we permit $I\rightarrow S\rightarrow I$
+but no other multi-step jumps.
+It has the disadvantage that its matrix form is a product integral and
+it's non-matrix form will have convolutions.
+
+
+# References
+
+
+

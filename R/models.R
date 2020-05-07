@@ -5,8 +5,8 @@
 #' @param Bfn A function for building the matrix represention of the system of
 #' equations that update the state vector
 #' @export
-makeV = function(PAR, Bfn) {
-    PAR$A = 0
+makeV = function(PAR, Bfn, par = "A") {
+    PAR[[par]] = 0
     Bfn(PAR)
 }
 
@@ -17,9 +17,9 @@ makeV = function(PAR, Bfn) {
 #' @param Bfn A function for building the matrix represention of the system of
 #' equations that update the state vector
 #' @export
-makeW = function(PAR, Bfn) {
-    V = makeV(PAR, Bfn)
-    (Bfn(PAR) - V)/PAR$A
+makeW = function(PAR, Bfn, par = "A") {
+    V = makeV(PAR, Bfn, par)
+    (Bfn(PAR) - V)/PAR[[par]]
 }
 
 #' Generic function for making the D matrix that maps the state vector, Y, to
