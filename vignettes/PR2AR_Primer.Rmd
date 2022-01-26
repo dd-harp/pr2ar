@@ -1,11 +1,12 @@
 ---
 title: "PR2AR_Primer"
-output: rmarkdown::pdf_document
-vignette: >
-  %\VignetteIndexEntry{PR2AR_Primer}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
-  % \VignetteDepends{data.table, ggplot2} 
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    keep_tex: yes
+vignette: "%\\VignetteIndexEntry{PR2AR_Primer} %\\VignetteEngine{knitr::rmarkdown}
+  %\\VignetteEncoding{UTF-8} % \\VignetteDepends{data.table, ggplot2} \n"
 ---
 
 
@@ -14,7 +15,7 @@ knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
   echo = TRUE)
-library(data.table); library(ggplot2)
+library(data.table); library(ggplot2); library(DiagrammeR)
 ```
 
 ## Motivation
@@ -23,48 +24,85 @@ library(data.table); library(ggplot2)
 ## A Bad Start
 We assume that infections arise from a Poisson process with a rate equal to the FoI, $h$, so that the probability of acquiring a new infection after $t$ days is $A(t) = 1 - e^{-ht}$. Let $Q(r, t) = e^{-r t}$ denote the fraction of a cohort with recovery rate, $r$, that naturally remains infected after $t$ days. It is tempting to start with the simple model:
 \begin{equation} 
-X_{t+1} = A_t (1 - X_t) + Q X_t  
+X_{t+1} = A_t \bar{X_t} + Q X_t  
 \end{equation}
-From this, we can solve for $A_t$: 
+where $\bar{x} \equiv 1 - x$. From this, we can solve for $A_t$: 
 \begin{equation} 
-A_t = \frac{X_{t+1} - Q X_t}{1-X_t} 
+A_t = \frac{X_{t+1} - Q X_t}{\bar{X_t}}
 \end{equation}
 At the steady state, $X_{t+1} = X_t,$ so we get the relationship: 
-$$\frac{A}{1-Q} = \frac{X}{1-X}$$
-Note that $A$, a probability, can be at most 1, so $X \leq 1/(2-Q)$. If we take a 14-day time step and assume $r = \frac{1}{200}$, then we get that Equation 2 gives nonsensical results for $X > 0.93$. Since there is no evidence that being infected protects against future infection, this is an artifact. 
+$$\frac{A}{\bar{Q}} = \frac{X}{\bar{X}}$$
+Note that $A$, a probability, can be at most 1, so $X \leq 1/(2-Q)$. If we take a 14-day time step and assume $r = \frac{1}{200}$ (a 200 day average length of infection), then we get that Equation 2 gives nonsensical results for $X > 0.93$. Since there is no evidence that being infected protects against future infection, this is an artifact. 
+
+```{r, echo = F}
+grViz("
+digraph dot {
+    rankdir='LR'
+    
+    graph [layout = dot]
+    
+    node [shape = circle]
+    S X
+    
+    edge [color = grey]
+    S -> X [label = 'A']
+    S -> S [label = '1- A']
+    X -> X [label = 'Q']
+    X -> S [label = '1 - Q']
+}")
+```
 
 ## A Better Start
-We don't want to work around artifacts, so what if we rethink the model. What if anyone can get infected, including the fraction that would have otherwise cleared their infections? The susceptible class is $1-X_t + (1-Q)X_t$, or more simply: 
+We don't want to work around artifacts, so what if we rethink the model. What if anyone can get infected, including the fraction that would have otherwise cleared their infections? The susceptible class is $1-X_t + \bar{Q}X_t$, or more simply: 
 \begin{equation} 
-X_{t+1} = A_t (1 - Q X_t) + Q X_t  
+X_{t+1} = A_t (1 - Q) X_t + Q X_t  
 \end{equation}
-When $A=1$, at the steady state, we get that $X=1$. 
+This represents multiple events occurring in a time step -- recovery followed by infection. These events are ordered, with recovery coming first, leading to the additional term appearing in the update equation for the infected class. Now, when $A=1$, at the steady state, we get that $X=1$. 
+
+```{r, echo = F}
+grViz("
+digraph dot {
+    rankdir='LR'
+    
+    graph [layout = dot]
+    
+    node [shape = circle]
+    S X
+    
+    edge [color = grey]
+    S -> X [label = 'A']
+    S -> S [label = '1- A']
+    X -> X [label = 'Q']
+    X -> S [label = '1 - Q']
+    X -> X [label = 'A(1 - Q)']
+}")
+```
 
 ## Matrix Form
 One more wrinkle might help us write down equations without making errors. We will write down equations that assign a state to every person.  
 \begin{equation} \begin{array}{rl}
-S_{t+1} &=  (1-A_t) S_t + (1 - A_t)(1-Q)X_t\\
-X_{t+1} &=  A_t S_t + A_t(1 - Q)X_t  + Q X_t \\
+S_{t+1} &=  \bar{A_t} S_t +  \bar{A_t}\bar{Q}X_t\\
+X_{t+1} &=  A_t S_t + A_t\bar{Q}X_t  + Q X_t \\
 \end{array} \end{equation}
 
 Which we can rewrite in Markov matrix form, ensuring that all entries are positive and every column adds to 1. Let $Y = \left<S,X\right>$, then we can 
 rewrite these equations as $Y_{t+1} = B Y_t$ where 
 \begin{equation} B=
 \left[ \begin{array}{cc}
-1-A_t & (1-A_t)(1-Q) \\
-A_t &  A_t(1 - Q) + Q \\
+\bar{A_t} & \bar{A_t}\bar{Q} \\
+A_t &  A_t\bar{Q} + Q \\
 \end{array} \right]  \end{equation}
 and we simply check to make sure all the columns sum to 1 to verify that $B$ is row stochastic. We really wish to solve for $A_t$, so we write $Y_{t+1} = A_t W Y_t + V Y_t$, where
 
 \begin{equation} W=
 \left[ \begin{array}{cc}
--1 & -(1-Q)\\
-1 & 1 - Q  \\
+-1 & -\bar{Q}\\
+1 & \bar{Q}  \\
 \end{array} \right]  \end{equation}
 and
 \begin{equation} V =
 \left[ \begin{array}{cc}
-1 & 1-Q \\
+1 & \bar{Q} \\
 0 &  Q \\
 \end{array} \right] \end{equation}
 
@@ -75,21 +113,21 @@ Solving for the first right eigenvector
 $$
 (B - I) \cdot Y = 
 \left[ \begin{array}{cc}
--A & (1-A)(1-Q) \\
-A &  -(1-A)(1-Q)\\
-\end{array} \right] \cdot Y = A S - (1 - A)(1 - Q)X = 0
+-A & \bar{A}\bar{Q} \\
+A &  -\bar{A}\bar{Q}\\
+\end{array} \right] \cdot Y = A S - \bar{A}\bar{Q}X = 0
 $$
 and including the fact that the sum of all states is 1
 $$S  =  1 - X$$
 we get that
-$$ X^* = \frac{A}{1-Q(1-A)} $$
+$$ X^* = \frac{A}{1-Q\bar{A}} $$
 and
-$$ A^* = \frac{X - QX}{1-QX}$$
+$$ A^* = \frac{X\bar{Q}}{1-QX}$$
 
 Alternatively, we can utilize a one dimensional optimization function to solve:
-$$A^* = argmin_{A \in [0,1]} f(A) = |X - D Y_{eq}(A)|$$
+$$A^* = \mathrm{arg\,min}_{A \in [0,1]} f(A) = |X - D Y_{eq}(A)|$$
 where $$Y_{eq}(A) = (A W + V) x_R = x_R$$
-```{r}
+```{r, echo = F}
 ## Solve for steady states using eigen function and algebraic solution
 # Set up example B
 dt = 10 # ten day time step
@@ -211,10 +249,12 @@ $$A_t = \left( X_{t + 1} - D V Y_t  \right) / \left( D W Y_t \right).$$
 
 This enables an inductive procedure where we only need to estimate an initial state vector, $Y_0$, and attack-rate, $A_0$, and all future values can be calculated sequentially... like dominoes!
 
-```{r}
+```{r, echo = F}
 ## Compare steady state solutions to forward simulation
 D = t(c(0, 1))
 X = c(seq(0.3, 0.6, 0.01), seq(0.59, 0.3, -0.01))
+plot(X, type = 'l')
+
 # Find steady state values for X
 steadyA = optimA(X, PAR, makeB)
 
@@ -281,7 +321,7 @@ Now, $Y = \left<S,X,C \right>$, $D = \left<0,1,0 \right>$ and
 
 Solving for $Y$ at equilibrium is now critical because there are two unknowns, namely $S$ and $C$, for a given value of $X$.
 
-```{r}
+```{r, echo = F}
 ## Solve for steady states using eigen function and algebraic solution
 # Set up example B
 PAR$d = 0.05 # rate of anti-malarial drug user w/0 confirmed malaria
@@ -384,7 +424,7 @@ plotAR2PR(PAR, makeBdrugs)
 ## $Pf$PR Thresholds and AR2PR Monotonicity
 As can be seen in the preceding plots, for a given level of drug use there are levels of $Pf$PR that are not plausible. These thresholds can assist with identifying a disconnect between estimated case management and $Pf$PR. In addition, the relationship between AR and PR is not monotonic for certain levels of treatment, leading to two solutions for a given $Pf$PR that exceeds the PR associated with an AR of 1 but is less than the maximum allowable PR. In order to address both of these problems we will introduce boundary conditions and report both possible AR values when converting from $Pf$PR to AR.
 
-```{r}
+```{r, echo = F}
 AR2PRopt <- function(A, PAR, Bfn) {
   AR2PR(A, PAR, Bfn)$X
 }
@@ -461,7 +501,7 @@ eqAR
 
 In the above PR2AR function we are returing the equilibrium AR associated with each $Pf$PR value. While this is a helpful approximation, as we would expect (and demonstrated earlier) the forward simulation estimates of AR differ from the equilibrium estimates.
 
-```{r}
+```{r, echo = F}
 makeBdrugs <- function(PAR) {
     A = PAR$A; Q = PAR$Q; d = PAR$d; rho = PAR$rho
     cbind(c((1 - d)*(1 - A), (1 - d)*(1 - rho)*A, d + (1 - d)*rho*A), 
@@ -521,7 +561,7 @@ $$ Y = \left<S, E_0, E_i, \ldots, E_{n-1}, E_n, I_1, I_i, \ldots, I_{n-1}, I_n \
 and 
 $$ D = \left<0, 0, 1, \ldots, 1\right> $$ 
 
-```{r}
+```{r, echo = F}
 PAR$In <- 5
 PAR$Cn <- 0
 makeD <- function(PAR) {
@@ -627,7 +667,7 @@ Because the row sums of $W$ are zero, the terms $A_t A_{t+1} W^2$ and $A_{t+1} W
 
 $$ A_t = \frac{X_{t+2} - D V^2 Y_t}  {D V W Y_t}$$
 
-```{r}
+```{r, echo = F}
 ## Update 
 fn2 <- function(params, PAR, Bfn, X) {
   A1 = params[1]
@@ -732,7 +772,7 @@ C_2&0&0&0&0&0&0&0&0&0&1&0\\
 \end{array} \right] + \left[
  \begin{array}{c} 0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\\delta/(1-\delta)\\0  \end{array} \right]$$
 
-```{r}
+```{r, echo = F}
 
 makeBdrugs_age = function(PAR){
   A = PAR$A; Q = PAR$Q; rho = PAR$rho; In = PAR$In; Cn = PAR$Cn
@@ -776,7 +816,7 @@ X = (1 + 0.1*sin(seq(0, length(X), length.out = length(X))))*X
 ARdrugs_age = PR2AReq(X, PAR, makeBdrugs_age)
 ```
 
-```{r}
+```{r, echo = F}
 ## Generic forward simulation function
 simAR <- function(X, PAR, Bfn) {  
   V = makeV(PAR, Bfn)
